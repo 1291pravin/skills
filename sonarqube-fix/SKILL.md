@@ -22,11 +22,17 @@ Run `sonar-scanner --version` to check if the sonar-scanner CLI is installed.
 
 1. Detect the platform:
    - **macOS / Linux**: Run `brew install sonar-scanner`
+     After install, verify the binary path: `which sonar-scanner`
+     Confirm it points to a Homebrew-managed path (e.g. `/opt/homebrew/bin/sonar-scanner` or `/usr/local/bin/sonar-scanner`).
+     If it points somewhere unexpected, warn the user — a non-Homebrew binary could be a supply-chain risk.
    - **Windows**: Tell the user:
-     > sonar-scanner is not installed. Please download it from https://docs.sonarsource.com/sonarqube/latest/analyzing-source-code/scanners/sonarscanner/ — extract the archive and add the `bin` folder to your PATH.
+     > sonar-scanner is not installed. Please download it from the official SonarSource docs — extract the archive and add the `bin` folder to your PATH.
      > Once installed, let me know and I'll continue.
 2. After installation, verify with `sonar-scanner --version`
 3. If installation fails, stop and ask the user for help — do not proceed without a working CLI
+
+**Security note — CLI integrity:**
+Homebrew verifies SHA256 checksums automatically. For enterprise/air-gapped environments, download the official `.zip` directly from SonarSource and verify the checksum manually before extracting.
 
 ## Step 2: Resolve Server URL & Token
 
@@ -37,16 +43,36 @@ Run `sonar-scanner --version` to check if the sonar-scanner CLI is installed.
      > What is the URL of your SonarQube server? (e.g. `http://sonarqube.mycompany.com`)
 
 2. Resolve the **authentication token** in this order:
-   - Check `SONAR_TOKEN` environment variable
-   - Fall back to `sonar.token` in `sonar-project.properties`
-   - If still missing, ask the user to generate a token in SonarQube (My Account → Security → Generate Token) and set it:
-     > Please run: `export SONAR_TOKEN=<your-token>` and let me know when done.
+   - Check `SONAR_TOKEN` environment variable ✅ preferred
+   - Check `sonar.token` in `sonar-project.properties` ⚠️ only if the file is gitignored (see security note)
+   - If still missing, ask the user to generate a token in SonarQube (My Account → Security → Generate Token) with **"Execute Analysis"** permission only (least-privilege), then set it safely:
+     > To avoid saving the token in your shell history, run:
+     > `read -s SONAR_TOKEN && export SONAR_TOKEN`
+     > Paste the token and press Enter. Let me know when done.
 
-3. Verify connectivity:
+3. **Security check — prevent token leakage:**
+   - Check whether `sonar-project.properties` is tracked by git: `git ls-files sonar-project.properties`
+   - If it IS tracked AND it contains `sonar.token`, **stop immediately** and tell the user:
+     > **SECURITY RISK**: `sonar-project.properties` is committed to git and contains a `sonar.token` value. This token is now in your git history.
+     > **You must:**
+     > 1. Revoke the token immediately in SonarQube (My Account → Security)
+     > 2. Remove `sonar.token` from `sonar-project.properties`
+     > 3. Add `sonar-project.properties` to `.gitignore` (or move the token to an env var)
+     > 4. Generate a new token and set it via `export SONAR_TOKEN=<new-token>`
+     > Let me know when done and I will continue.
+   - If `sonar-project.properties` is NOT tracked, ensure `.gitignore` includes it or the `sonar.token` line.
+
+4. Verify connectivity:
    ```bash
    curl -s -u "$SONAR_TOKEN:" "$SONAR_HOST_URL/api/system/status"
    ```
    Expected response: `{"status":"UP"}`. If it fails, check URL and token and retry.
+
+**Security note — token best practices:**
+- Use a **project-scoped "Execute Analysis" token** — never an admin or global token
+- Tokens are stored by SonarQube as bcrypt hashes; you cannot retrieve a token after creation — if lost, revoke and regenerate
+- In CI/CD (GitHub Actions, GitLab CI, Jenkins): store as a masked/protected secret variable, never in code or `sonar-project.properties`
+- Tokens do not expire by default — set an expiry date in SonarQube if your version supports it
 
 ## Step 3: Detect Project Key
 
