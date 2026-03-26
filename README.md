@@ -73,6 +73,29 @@ Run `/sonarqube-fix` in your AI coding agent, or just ask:
 
 > "Fix all SonarQube issues in this repo"
 
+### package-version-update
+
+Automated dependency updates with a tiered approach. Scans all project dependencies, categorizes updates by risk level, and applies them with build/test verification at each stage.
+
+**What it does:**
+
+1. Detects your package manager (npm, yarn v1/v4, pnpm, bun)
+2. Takes a baseline test snapshot before touching any code
+3. Scans all dependencies and devDependencies for available updates
+4. Categorizes into three tiers:
+   - **Tier 1: EOL/Deprecated** — Auto-updates packages that are deprecated or target EOL runtimes
+   - **Tier 2: Patch/Minor** — Auto-applies semver-safe updates (no breaking changes)
+   - **Tier 3: Major** — Fetches changelogs from npm registry and GitHub, analyzes breaking changes against your codebase, presents a migration plan for your approval (max 5 per run)
+5. Builds and tests after Tier 1+2, and after each Tier 3 update
+6. Reverts any update that causes test failures (added to "deferred" list)
+7. Creates a PR with a comprehensive summary table, migration details, and manual action items
+
+**Usage:**
+
+Run `/package-version-update` in your AI coding agent, or just ask:
+
+> "Update all dependencies in this repo"
+
 ## Adding New Skills
 
 Each skill is a folder with a `SKILL.md` file:
