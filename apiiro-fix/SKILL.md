@@ -15,6 +15,8 @@ description: >
 
 Automate the full Apiiro security remediation workflow: detect issues, fix them, verify the fixes, and create a PR. Follow each step in order.
 
+**Re-run behavior:** Before starting, check if a branch matching `fix/apiiro-security-remediation-chunk-*` already exists for today's date. If it does, ask the user whether to continue from where the previous run left off (next chunk) or start fresh on a new branch.
+
 ## Step 1: Check & Install Apiiro CLI
 
 Run `apiiro --version` to check if the Apiiro CLI is installed.
@@ -89,6 +91,8 @@ apiiro risks --repo <repo-identifier> --output json
 
 If the command fails or the repo isn't found in Apiiro, ask the user for the correct Apiiro repo identifier and retry.
 
+If the command times out or returns partial/truncated results, retry once. If it fails again, inform the user of the error and ask whether to proceed with partial results or stop.
+
 Parse the JSON output and categorize findings into:
 - **SCA**: Vulnerable open-source packages
 - **SAST**: Code-level security vulnerabilities (OWASP Top 10)
@@ -98,12 +102,30 @@ Parse the JSON output and categorize findings into:
 - **Supply Chain**: CI/CD misconfigs, weak branch protections
 - **Other**: Anything that doesn't fit the above
 
+**Sort all findings by severity** (Critical → High → Medium → Low) and within the same severity, order by category: Secrets → Vulnerabilities (SAST) → Package Vulnerabilities (SCA) → Misconfigurations → PII → Other.
+
 Display a summary to the user before proceeding:
-> Found **X** package vulnerabilities, **Y** code issues, **Z** exposed secrets, and **W** other findings. Proceeding to remediate all.
+> Found **N** total findings: **X** package vulnerabilities, **Y** code issues, **Z** exposed secrets, and **W** other findings.
+>
+> This run will fix issues **1–20** (highest severity first). Run `/apiiro-fix` again to continue with the next chunk.
 
 If there are zero findings, tell the user and stop — there is nothing to fix.
 
-## Step 6: Remediate — Package Vulnerabilities (SCA)
+**Chunking:** Process up to **20 findings per run** to keep PRs focused and reviewable. If there are 20 or fewer total findings, fix them all in one run.
+
+## Step 6: Baseline Test Snapshot
+
+**Run this BEFORE making any code changes.**
+
+1. Run the test command for the detected package manager and capture full output
+2. Record every failing test by name/path → store as the **baseline failures list**
+3. If the build itself fails before tests can run → record the build error as a baseline failure too
+4. Inform the user:
+   > Baseline captured: **B** tests already failing before any changes. These will not be attributed to this run.
+
+This baseline is used in Step 11 to distinguish pre-existing failures from regressions you introduce.
+
+## Step 7: Remediate — Package Vulnerabilities (SCA)
 
 For each vulnerable package identified:
 
@@ -115,7 +137,7 @@ For each vulnerable package identified:
    - Update code to accommodate the breaking changes
 4. After updating, verify the lock file was regenerated correctly
 
-## Step 7: Remediate — Code Vulnerabilities (SAST)
+## Step 8: Remediate — Code Vulnerabilities (SAST)
 
 For each SAST finding:
 
@@ -130,20 +152,20 @@ For each SAST finding:
    - **Other OWASP Top 10**: Follow the corresponding OWASP remediation guidance
 4. Ensure the fix preserves the intended functionality — don't break the feature
 
-## Step 8: Remediate — Secrets
+## Step 9: Remediate — Secrets
 
 For each exposed secret:
 
 1. **Remove** the hardcoded secret from the source code
 2. **Replace** with an environment variable reference (e.g., `process.env.API_KEY`) or a secrets manager lookup
-3. **Add** a placeholder entry to `.env.example` so other developers know the variable is needed
+3. **Add** a placeholder entry to `.env.example` (create the file if it does not exist) so other developers know the variable is needed
 4. **Update** `.gitignore` to include `.env` if not already present
 5. **Warn the user** prominently:
    > **ACTION REQUIRED**: The secret `<name>` was found in source code (and likely in git history). You must **rotate this credential immediately** — changing it in code alone is not enough since the old value is in the commit history.
 
 Do not attempt to rewrite git history to remove secrets — that is a manual decision for the user.
 
-## Step 9: Remediate — Misconfigurations & Other Findings
+## Step 10: Remediate — Misconfigurations & Other Findings
 
 For each remaining finding:
 
@@ -155,19 +177,7 @@ For each remaining finding:
 
 For any findings that **cannot be auto-fixed**, clearly list them with recommended manual actions at the end.
 
-## Step 9.5: Baseline Test Snapshot
-
-**Run this BEFORE making any code changes.**
-
-1. Run the test command for the detected package manager and capture full output
-2. Record every failing test by name/path → store as the **baseline failures list**
-3. If the build itself fails before tests can run → record the build error as a baseline failure too
-4. Inform the user:
-   > Baseline captured: **B** tests already failing before any changes. These will not be attributed to this run.
-
-This baseline is used in Step 10 to distinguish pre-existing failures from regressions you introduce.
-
-## Step 10: Build & Test
+## Step 11: Build & Test
 
 After all remediations:
 
@@ -179,11 +189,11 @@ After all remediations:
    - **New failures** (were passing before, fail now) → caused by this run → fix the source code and retry (max 3 attempts)
    - **Pre-existing failures** (already in baseline) → do NOT touch; list them in the PR under "Pre-existing failures"
    - **Never modify tests** to make them pass — only fix the source code being tested
-3. If you cannot resolve a new failure after 3 attempts, stop and ask the user for help
+3. If you cannot resolve a new failure after 3 attempts, offer to roll back all changes with `git checkout -- .` and inform the user which specific findings caused the failures. Otherwise, stop and ask the user for help
 
-## Step 11: Create Pull Request
+## Step 12: Create Pull Request
 
-1. **Create a branch**: `fix/apiiro-security-remediation-YYYY-MM-DD` (use today's date)
+1. **Create a branch**: `fix/apiiro-security-remediation-chunk-N-YYYY-MM-DD` (N = chunk number starting from 1; use today's date)
 2. **Stage all changes**: `git add` the modified files (be specific — don't add unrelated files)
 3. **Commit** with a descriptive message:
    ```
@@ -198,7 +208,9 @@ After all remediations:
 5. **Create a PR** with a comprehensive body:
 
    ```markdown
-   ## Security Remediation — Apiiro Findings
+   ## Security Remediation — Apiiro Findings (Chunk N of ~M)
+
+   **Severity range fixed in this chunk:** Critical → High (issues 1–20 of N total)
 
    ### Summary
    | Category | Found | Fixed | Manual Action Needed |
@@ -223,6 +235,9 @@ After all remediations:
    - [ ] Enable branch protection on `main` branch
    - [ ] Review license compliance for `some-package`
 
+   ### Remaining Issues
+   **N - 20** issues remain. Run `/apiiro-fix` again to fix the next chunk.
+
    ### Build & Test Status
    - Build: PASSING
    - Tests: PASSING (X new failures fixed; B pre-existing failures unchanged — not caused by this run)
@@ -230,3 +245,4 @@ After all remediations:
    ```
 
 6. Share the PR URL with the user
+7. If issues remain, remind the user how many are left and prompt them to run `/apiiro-fix` again for the next chunk
