@@ -155,18 +155,31 @@ For each remaining finding:
 
 For any findings that **cannot be auto-fixed**, clearly list them with recommended manual actions at the end.
 
+## Step 9.5: Baseline Test Snapshot
+
+**Run this BEFORE making any code changes.**
+
+1. Run the test command for the detected package manager and capture full output
+2. Record every failing test by name/path → store as the **baseline failures list**
+3. If the build itself fails before tests can run → record the build error as a baseline failure too
+4. Inform the user:
+   > Baseline captured: **B** tests already failing before any changes. These will not be attributed to this run.
+
+This baseline is used in Step 10 to distinguish pre-existing failures from regressions you introduce.
+
 ## Step 10: Build & Test
 
 After all remediations:
 
 1. **Build** the project using the detected package manager's build command
-   - If the build fails, read the error output, identify the cause (likely from a package update or code change), fix it, and rebuild
-2. **Test** the project using the detected package manager's test command
-   - If tests fail, analyze the failures:
-     - If caused by your changes, fix the code or tests
-     - If pre-existing failures (not related to your changes), note them but don't block
-3. Iterate until build and tests pass
-4. If you cannot resolve a build/test failure after 3 attempts, stop and ask the user for help
+   - If the build fails: compare the error to the baseline
+   - If build was already broken before this run → note it in the PR, do not attempt to fix it
+   - If the build failure is new (introduced by this run) → identify the cause, fix it, and rebuild (max 3 attempts)
+2. **Test** the project and diff results against the baseline:
+   - **New failures** (were passing before, fail now) → caused by this run → fix the source code and retry (max 3 attempts)
+   - **Pre-existing failures** (already in baseline) → do NOT touch; list them in the PR under "Pre-existing failures"
+   - **Never modify tests** to make them pass — only fix the source code being tested
+3. If you cannot resolve a new failure after 3 attempts, stop and ask the user for help
 
 ## Step 11: Create Pull Request
 
@@ -212,7 +225,8 @@ After all remediations:
 
    ### Build & Test Status
    - Build: PASSING
-   - Tests: PASSING (or note pre-existing failures)
+   - Tests: PASSING (X new failures fixed; B pre-existing failures unchanged — not caused by this run)
+   - Pre-existing failures (do not review): `test/legacy/foo.test.ts`, ...
    ```
 
 6. Share the PR URL with the user
