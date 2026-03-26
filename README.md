@@ -45,6 +45,34 @@ Run `/apiiro-fix` in your AI coding agent, or just ask:
 
 > "Fix all Apiiro security findings in this repo"
 
+### sonarqube-fix
+
+Automated SonarQube issue remediation. Fetches issues from a self-hosted SonarQube instance and fixes them in severity order — 20 per run, one focused PR per chunk.
+
+**What it does:**
+
+1. Installs sonar-scanner CLI if missing (Homebrew on Mac/Linux, manual on Windows)
+2. Connects to your self-hosted SonarQube (`SONAR_HOST_URL` + `SONAR_TOKEN`)
+3. Detects the project key from `sonar-project.properties` or git remote
+4. Takes a baseline test snapshot before touching any code
+5. Fetches all open issues: Bugs, Vulnerabilities, Security Hotspots, Code Smells
+6. Prioritizes by severity: BLOCKER → CRITICAL → MAJOR → MINOR → INFO
+7. Remediates:
+   - **Bugs** — Null dereferences, off-by-one errors, resource leaks, wrong conditions
+   - **Vulnerabilities** — SQL injection, XSS, path traversal, command injection, hardcoded secrets
+   - **Security Hotspots** — Weak crypto, insecure random, open redirect, SSRF
+   - **Code Smells** — Dead code, high complexity, naming issues (MAJOR+ only)
+8. Fixes up to 20 issues per run (keeps PRs focused and reviewable)
+9. Builds and tests, comparing against baseline to avoid attributing pre-existing failures
+10. Creates one PR per chunk with a summary table and manual action checklist
+11. Reports remaining issue count and prompts you to run again
+
+**Usage:**
+
+Run `/sonarqube-fix` in your AI coding agent, or just ask:
+
+> "Fix all SonarQube issues in this repo"
+
 ## Adding New Skills
 
 Each skill is a folder with a `SKILL.md` file:
