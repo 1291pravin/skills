@@ -14,6 +14,8 @@ description: >
 
 Automate the full SonarQube remediation workflow: connect to your self-hosted SonarQube instance, fetch all open issues, fix them in severity order (20 per run), and create a focused PR per chunk. Follow each step in order.
 
+**Re-run behavior:** Before starting, check if a branch matching `fix/sonarqube-chunk-*` already exists for today's date. If it does, ask the user whether to continue from where the previous run left off (next chunk) or start fresh on a new branch.
+
 ## Step 1: Check & Install sonar-scanner CLI
 
 Run `sonar-scanner --version` to check if the sonar-scanner CLI is installed.
@@ -106,6 +108,7 @@ Use the detected package manager for ALL commands throughout the workflow:
 | Action | npm | yarn v1 | yarn v4 | pnpm | bun |
 |--------|-----|---------|---------|------|-----|
 | Install deps | `npm ci` | `yarn install --frozen-lockfile` | `yarn install --immutable` | `pnpm install --frozen-lockfile` | `bun install --frozen-lockfile` |
+| Update pkg | `npm install <pkg>@<ver>` | `yarn upgrade <pkg>@<ver>` | `yarn up <pkg>@<ver>` | `pnpm update <pkg>` | `bun add <pkg>@<ver>` |
 | Build | `npm run build` | `yarn build` | `yarn build` | `pnpm run build` | `bun run build` |
 | Test | `npm test` | `yarn test` | `yarn test` | `pnpm test` | `bun test` |
 
@@ -152,6 +155,8 @@ GET $SONAR_HOST_URL/api/hotspots/search
 
 Within the same severity, order by type: Vulnerabilities → Security Hotspots → Bugs → Code Smells.
 
+**Note:** Security Hotspots use `vulnerabilityProbability` (HIGH/MEDIUM/LOW) instead of the standard `severity` field. Map them as follows for sorting: HIGH → between CRITICAL and MAJOR, MEDIUM → MAJOR, LOW → MINOR.
+
 **Display the full inventory** before fixing:
 
 > Found **N** total issues:
@@ -190,7 +195,7 @@ Apply OWASP-aligned fixes:
 - **XSS**: Escape or sanitize user-supplied content before rendering in HTML
 - **Path Traversal**: Validate and normalize file paths; use an allowlist of permitted directories
 - **Command Injection**: Avoid passing user input to shell commands; use safe language APIs
-- **Hardcoded Credentials**: Remove secret from source code; replace with `process.env.SECRET_NAME` (or equivalent); add a placeholder to `.env.example`; ensure `.env` is in `.gitignore`; **warn the user prominently**:
+- **Hardcoded Credentials**: Remove secret from source code; replace with `process.env.SECRET_NAME` (or equivalent); add a placeholder to `.env.example` (create the file if it does not exist); ensure `.env` is in `.gitignore`; **warn the user prominently**:
   > **ACTION REQUIRED**: The credential `<name>` was found hardcoded. You must **rotate it immediately** — it is likely already in git history. Changing it in code alone is not sufficient.
 - **Insecure Deserialization**: Validate and sanitize data before deserializing
 
@@ -228,7 +233,7 @@ After applying all fixes in the chunk:
    - **Pre-existing failures** (already in baseline) → do NOT modify; list them in the PR
    - **Never modify tests** to make them pass — only fix the source code being tested
 
-3. If a new failure cannot be resolved after 3 attempts, stop and ask the user for help before proceeding
+3. If a new failure cannot be resolved after 3 attempts, offer to roll back all changes with `git checkout -- .` and inform the user which specific findings caused the failures. Otherwise, stop and ask the user for help before proceeding
 
 ## Step 9: Create Pull Request
 
