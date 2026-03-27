@@ -1,474 +1,333 @@
 ---
 name: aqa-usablenet
 description: >
-  Run a UsableNet AQA accessibility scan for a given site or suite, fetch
-  violations from the completed run, fix them in severity order (critical →
-  serious → moderate → minor) up to 20 per run, and create a focused PR per
-  chunk. Handles color contrast, missing alt text, ARIA labels, form labels,
-  keyboard navigation, link/button names, document title, heading order,
-  landmarks, and focus visibility. Skips third-party and auto-generated files.
-  Use this skill whenever the user mentions UsableNet, AQA, accessibility
-  violations, WCAG issues, a11y scan, or wants to fix accessibility findings,
-  even if they don't explicitly say "aqa-usablenet". Accepts an optional site
-  name (e.g. fr.filorga.com) to identify the target suite automatically.
+  Full UsableNet AQA API integration — create suites, manage flows and crawlers,
+  run accessibility tests, fetch and analyze issues, schedule recurring scans,
+  evaluate raw HTML, and remediate WCAG violations. Handles any AQA operation:
+  list/create/update/delete suites, flows, crawlers, and tests; trigger and
+  monitor runs; extract issues by flow or page; schedule tests; manage keyboard
+  navigation tests; and auto-fix accessibility violations with PR creation.
+  Use this skill whenever the user mentions UsableNet, AQA, accessibility API,
+  WCAG scan, a11y issues, suite ID, flow ID, run ID, test ID, or wants to
+  interact with the AQA platform in any way — even if they don't explicitly
+  say "aqa-usablenet". Accepts suite IDs (TS*), test IDs (A*-0), run IDs
+  (A*-timestamp), flow IDs (T*), or site names to resolve targets automatically.
 ---
 
-# UsableNet AQA Accessibility Remediation
+# UsableNet AQA — API-Driven Accessibility Platform
 
-Automate the full AQA remediation workflow: connect to UsableNet AQA, create and run an accessibility test for the target suite, fetch all violations, fix them in severity order (20 per run), and create a focused PR per chunk. Follow each step in order.
+This skill gives you complete control over the UsableNet AQA API v3.1. You can perform any operation — from listing suites to running scans and fixing violations.
 
-## Step 1: Validate Environment Variables
+For the full API reference with request/response schemas, read `references/api-reference.md` in this skill directory.
 
-Check that the required environment variables are set:
+## Authentication & Setup
 
-```bash
-[ -z "$AQA_API_KEY" ]    && echo "MISSING: AQA_API_KEY"    || echo "OK: AQA_API_KEY"
-[ -z "$AQA_TEAM_SLUG" ]  && echo "MISSING: AQA_TEAM_SLUG"  || echo "OK: AQA_TEAM_SLUG"
+Every API call requires two values:
+
+| Variable | Purpose | ID Format |
+|----------|---------|-----------|
+| `AQA_API_KEY` | API key, sent as `X-Team` header | Opaque string |
+| `AQA_TEAM_SLUG` | Team identifier in the URL path | e.g. `acme` |
+
+**Base URL**: `https://api-aqa.usablenet.com/v3.1/{AQA_TEAM_SLUG}`
+
+**Common headers** for every request:
+```
+Accept: application/json
+X-Team: {AQA_API_KEY}
+Content-Type: application/json  (for POST requests with body)
 ```
 
-`AQA_SUITE_ID` is optional — the skill can resolve the suite automatically (see Step 3).
+Before doing any work, verify both variables are set:
+```bash
+[ -z "$AQA_API_KEY" ]   && echo "MISSING: AQA_API_KEY"   || echo "OK: AQA_API_KEY"
+[ -z "$AQA_TEAM_SLUG" ] && echo "MISSING: AQA_TEAM_SLUG" || echo "OK: AQA_TEAM_SLUG"
+```
 
-**If any required variable is missing**, stop and tell the user:
+If missing, tell the user to set them:
+```
+export AQA_API_KEY=<your-api-key>
+export AQA_TEAM_SLUG=<your-team-slug>
+```
+Find these in the AQA dashboard under "API Keys & Views". Never print the key value or commit it.
 
-> The following environment variable is not set: `AQA_API_KEY` / `AQA_TEAM_SLUG`.
-> Please set it in your shell before running this skill:
-> ```
-> export AQA_API_KEY=<your-api-key>
-> export AQA_TEAM_SLUG=<your-team-slug>
-> ```
-> You can find these values in your UsableNet AQA dashboard.
-
-**Security note**: Never print the key value. Never commit it to any project file. Always set via `export` in the terminal.
-
-## Step 2: Verify API Connectivity
-
-Run a lightweight connectivity check before doing any real work:
-
+**Connectivity check** — verify the API is reachable before any operation:
 ```bash
 curl -s -o /dev/null -w "%{http_code}" \
   -H "Accept: application/json" \
   -H "X-Team: $AQA_API_KEY" \
   "https://api-aqa.usablenet.com/v3.1/$AQA_TEAM_SLUG/a11y/suites"
 ```
+`200` = OK, `401` = bad key, `403` = insufficient permissions, `404` = bad team slug, `5xx` = API down.
 
-Interpret the HTTP status:
+## ID Formats
 
-| Status | Meaning | Action |
-|--------|---------|--------|
-| `200` | Connected | Proceed |
-| `401` | Invalid API key | Ask user to check `AQA_API_KEY` |
-| `403` | Insufficient permissions | Ask user to verify API key has access to this team |
-| `404` | Team slug not found | Ask user to check `AQA_TEAM_SLUG` |
-| `5xx` | AQA API is down | Ask user to retry later |
+The AQA API uses specific ID formats. Recognize these when the user provides them:
 
-Do not proceed past this step until the API returns `200`.
+| Resource | Format | Example |
+|----------|--------|---------|
+| Suite | `TS{n}` | `TS612` |
+| Flow / Crawler | `T{n}` | `T4143` |
+| Test | `A{n}-0` | `A3687-0` |
+| Run | `A{n}-{timestamp}` | `A3687-1747995246509` |
+| Page | `PAGE-{n}-T{n}-{n}-{hash}` | `PAGE-2-T4695-1-195ecaa26ef_ac1f2e8a66` |
+| Device | `D{n}` | `D774` |
+| Notification Group | `NG{n}` | `NG270` |
+| Saved Review | `AP{n}` | `AP84` |
 
-## Step 3: List Suites and Resolve Target Suite
+When the user provides an ID, infer the resource type from the format and use the appropriate API.
 
-Fetch all suites for the team:
+## Core API Operations
+
+Below is a quick-reference for the most common operations. For full schemas and all endpoints, read `references/api-reference.md`.
+
+### Suites
 
 ```bash
-curl -s \
-  -H "Accept: application/json" \
-  -H "X-Team: $AQA_API_KEY" \
+# List all suites
+curl -s -H "Accept: application/json" -H "X-Team: $AQA_API_KEY" \
   "https://api-aqa.usablenet.com/v3.1/$AQA_TEAM_SLUG/a11y/suites"
-```
 
-The response contains: `{ suites: [ { id, name, numFlows, numCrawlers }, ... ] }`
-
-**If zero suites are returned**, stop and tell the user:
-
-> No suites found for team `$AQA_TEAM_SLUG`. Please create a suite in the UsableNet AQA dashboard first, then re-run this skill.
-
-**Resolve the target suite using this priority order:**
-
-1. **`AQA_SUITE_ID` is set** → use that suite ID directly, skip name matching, proceed to Step 4
-2. **User provided a site name** (e.g. `fr.filorga.com`) → search suite names for a case-insensitive match:
-   - If exactly one match found → use it, report to user: `Using suite: "{name}" (id: {id})`
-   - If multiple matches found → list them and ask user to set `AQA_SUITE_ID=<id>`
-   - If no match found → display all suites and ask user to set `AQA_SUITE_ID=<id>`
-3. **Exactly one suite exists** → use it automatically, report to user: `Using suite: "{name}" (id: {id})`
-4. **Multiple suites, no site name given** → display the suite list and stop:
-
-> Multiple suites found. Please re-run with a site name or set the suite ID:
->
-> | Suite ID | Name | Flows | Crawlers |
-> |----------|------|-------|----------|
-> | `abc123` | fr.filorga.com | 5 | 2 |
-> | `def456` | en.filorga.com | 3 | 1 |
->
-> Set the suite: `export AQA_SUITE_ID=<id>`
-
-Store the resolved suite ID as `SUITE_ID` for use in subsequent steps.
-
-## Step 4: Get Suite Details and Collect Flow IDs
-
-Fetch the suite to retrieve its flows. Poll every 5 seconds until `numFlows >= 1`:
-
-```bash
-curl -s \
-  -H "Accept: application/json" \
-  -H "X-Team: $AQA_API_KEY" \
+# Get suite details (includes flows[] and crawlers[])
+curl -s -H "Accept: application/json" -H "X-Team: $AQA_API_KEY" \
   "https://api-aqa.usablenet.com/v3.1/$AQA_TEAM_SLUG/a11y/suites/$SUITE_ID"
 ```
 
-If `numFlows` is still 0 after polling, wait 5 seconds and retry. After 60 seconds with no flows, stop and tell the user the suite has no flows configured.
-
-Collect all flow IDs as a JSON array: `FLOW_IDS = suite.flows.map(f => f.id)`
-
-Report to the user:
-> Suite **{suiteName}** has **{numFlows}** flow(s). Creating accessibility test...
-
-## Step 5: Create Accessibility Test
-
-Generate a timestamp-based test name: `aqa-scan-YYYY-MM-DD-HH-MM` (use the current date/time).
-
-Create the test using all flows from the suite:
+### Flows (within a Suite)
 
 ```bash
-curl -s -X POST \
-  -H "Accept: application/json" \
-  -H "X-Team: $AQA_API_KEY" \
+# Get flow details
+curl -s -H "Accept: application/json" -H "X-Team: $AQA_API_KEY" \
+  "https://api-aqa.usablenet.com/v3.1/$AQA_TEAM_SLUG/a11y/suites/$SUITE_ID/flows/$FLOW_ID"
+
+# Create a flow from URL
+curl -s -X POST -H "Accept: application/json" -H "X-Team: $AQA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "My Flow", "url": "https://example.com"}' \
+  "https://api-aqa.usablenet.com/v3.1/$AQA_TEAM_SLUG/a11y/suites/$SUITE_ID/flows/url/create"
+
+# Update a flow
+curl -s -X POST -H "Accept: application/json" -H "X-Team: $AQA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Updated Flow", "url": "https://example.com/new"}' \
+  "https://api-aqa.usablenet.com/v3.1/$AQA_TEAM_SLUG/a11y/suites/$SUITE_ID/flows/$FLOW_ID/update"
+
+# Delete a flow
+curl -s -X POST -H "Accept: application/json" -H "X-Team: $AQA_API_KEY" \
+  "https://api-aqa.usablenet.com/v3.1/$AQA_TEAM_SLUG/a11y/suites/$SUITE_ID/flows/$FLOW_ID/delete"
+```
+
+### Crawlers (within a Suite)
+
+```bash
+# Create a crawler
+curl -s -X POST -H "Accept: application/json" -H "X-Team: $AQA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Site Crawler", "url": "https://example.com", "depth": 3, "limit": 100}' \
+  "https://api-aqa.usablenet.com/v3.1/$AQA_TEAM_SLUG/a11y/suites/$SUITE_ID/crawlers/url/create"
+
+# Update / Delete follow same pattern as flows
+```
+
+### Tests
+
+```bash
+# List tests for a suite
+curl -s -H "Accept: application/json" -H "X-Team: $AQA_API_KEY" \
+  "https://api-aqa.usablenet.com/v3.1/$AQA_TEAM_SLUG/a11y/tests?suiteId=$SUITE_ID"
+
+# Create a test
+curl -s -X POST -H "Accept: application/json" -H "X-Team: $AQA_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "suiteId": "'"$SUITE_ID"'",
-    "name": "'"$TEST_NAME"'",
-    "description": "Automated AQA accessibility scan",
-    "flowIds": '"$FLOW_IDS_JSON"',
+    "name": "aqa-scan-'"$(date +%Y-%m-%d-%H-%M)"'",
     "rulesetPackId": "v2",
-    "rulesetId": "wcag22"
+    "rulesetId": "wcag22",
+    "flowIds": '"$FLOW_IDS_JSON"',
+    "crawlerIds": '"$CRAWLER_IDS_JSON"'
   }' \
   "https://api-aqa.usablenet.com/v3.1/$AQA_TEAM_SLUG/a11y/tests/create"
+
+# Get test details (includes runs history)
+curl -s -H "Accept: application/json" -H "X-Team: $AQA_API_KEY" \
+  "https://api-aqa.usablenet.com/v3.1/$AQA_TEAM_SLUG/a11y/tests/$TEST_ID"
+
+# Update test configuration
+curl -s -X POST -H "Accept: application/json" -H "X-Team: $AQA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Updated", "flowIds": ["T4143"], "lifespan": "month"}' \
+  "https://api-aqa.usablenet.com/v3.1/$AQA_TEAM_SLUG/a11y/tests/$TEST_ID/update"
+
+# Move test to archive/trash/workspace
+curl -s -X POST -H "Accept: application/json" -H "X-Team: $AQA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"folder": "vault"}' \
+  "https://api-aqa.usablenet.com/v3.1/$AQA_TEAM_SLUG/a11y/tests/$TEST_ID/move"
 ```
 
-Capture `test.id` from the response as `TEST_ID`. If the request fails, report the error response body to the user and stop.
-
-## Step 6: Run the Test
-
-Trigger the test run:
+### Runs (Trigger, Monitor, Results)
 
 ```bash
-curl -s -X POST \
-  -H "Accept: application/json" \
-  -H "X-Team: $AQA_API_KEY" \
+# Trigger a run
+curl -s -X POST -H "Accept: application/json" -H "X-Team: $AQA_API_KEY" \
   "https://api-aqa.usablenet.com/v3.1/$AQA_TEAM_SLUG/a11y/tests/$TEST_ID/run"
-```
 
-Capture `run.id` from the response as `RUN_ID`.
-
-Report to user:
-> Test **{testName}** is running. Run ID: `{runId}`. Waiting for scan to complete...
-
-## Step 7: Poll Until Run Completes
-
-Poll the run status every 10 seconds until `run.status === 'ready'`:
-
-```bash
-curl -s \
-  -H "Accept: application/json" \
-  -H "X-Team: $AQA_API_KEY" \
+# Check run status (poll until status = "ready")
+curl -s -H "Accept: application/json" -H "X-Team: $AQA_API_KEY" \
   "https://api-aqa.usablenet.com/v3.1/$AQA_TEAM_SLUG/a11y/tests/runs/$RUN_ID"
-```
 
-On each poll, report progress:
-> Run `{runId}` status: **{status}** — polling again in 10s...
+# Stop a running test
+curl -s -X POST -H "Accept: application/json" -H "X-Team: $AQA_API_KEY" \
+  "https://api-aqa.usablenet.com/v3.1/$AQA_TEAM_SLUG/a11y/tests/runs/$RUN_ID/stop"
 
-When status is `ready`:
-> Scan complete.
-
-**Timeout**: If the run has not reached `ready` status after 30 minutes, stop and tell the user:
-> The scan is taking longer than expected. Check the AQA dashboard for run `{runId}` status and re-run this skill with `AQA_SUITE_ID={suiteId}` once it completes.
-
-## Step 8: Fetch All Issues
-
-First, get the list of flows with their result summary:
-
-```bash
-curl -s \
-  -H "Accept: application/json" \
-  -H "X-Team: $AQA_API_KEY" \
+# List flows in a run (with result summaries)
+curl -s -H "Accept: application/json" -H "X-Team: $AQA_API_KEY" \
   "https://api-aqa.usablenet.com/v3.1/$AQA_TEAM_SLUG/a11y/tests/runs/$RUN_ID/flows"
+
+# List pages in a run (crawler results, supports pagination)
+curl -s -H "Accept: application/json" -H "X-Team: $AQA_API_KEY" \
+  "https://api-aqa.usablenet.com/v3.1/$AQA_TEAM_SLUG/a11y/tests/runs/$RUN_ID/pages"
 ```
 
-Then, for each flow in the response, fetch its issues:
+### Issues (the core results)
 
 ```bash
-curl -s \
-  -H "Accept: application/json" \
-  -H "X-Team: $AQA_API_KEY" \
+# Get issues for a specific flow in a run
+curl -s -H "Accept: application/json" -H "X-Team: $AQA_API_KEY" \
   "https://api-aqa.usablenet.com/v3.1/$AQA_TEAM_SLUG/a11y/tests/runs/$RUN_ID/flows/$FLOW_ID/issues?changeIndex=-1&manual=false&stepIndex=0"
+
+# Get issues for a specific page in a run (crawler results)
+curl -s -H "Accept: application/json" -H "X-Team: $AQA_API_KEY" \
+  "https://api-aqa.usablenet.com/v3.1/$AQA_TEAM_SLUG/a11y/tests/runs/$RUN_ID/pages/$PAGE_ID/issues"
 ```
 
-For each issue in `issuesData.issues`, collect:
+Issue objects contain: `ruleId`, `impact` (critical/serious/moderate/minor), `needFixTitle`, `selectors[]`, `tagName`, `html`, `description`, `solutions[]`, `wcagCriteria[]`, `responsibility`, `technology`.
 
-```
-{
-  flowId, flowName,
-  selector:      issue.selectors?.[0],
-  tagName:       issue.tagName,
-  needFixTitle:  issue.needFixTitle,
-  ruleId:        issue.ruleId,
-  solutionId:    issue.solutionId,
-  impact:        issue.impact,           // 'critical' | 'serious' | 'moderate' | 'minor'
-  description:   issue.description,
-  solutions:     issue.solutions ?? [],
-  wcagCriteria:  issue.wcagCriteria,
-  html:          issue.html
-}
+### Evaluate HTML (quick check, no test needed)
+
+```bash
+curl -s -X POST -H "Accept: application/json" -H "X-Team: $AQA_API_KEY" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  --data-urlencode "rulesetId=wcag2aa" \
+  --data-urlencode "pageUrl=https://example.com" \
+  --data-urlencode "code=<html>...</html>" \
+  "https://api-aqa.usablenet.com/v3.1/$AQA_TEAM_SLUG/a11y/tests/evaluate"
 ```
 
-Aggregate all issues across all flows into a single list `ALL_ISSUES`.
+### Rulesets & Saved Reviews
 
-**If zero issues are found**, report a clean scan and stop:
-> No accessibility issues found in this scan. The site passes WCAG 2.2 checks for the configured flows.
+```bash
+# List available rulesets
+curl -s -H "Accept: application/json" -H "X-Team: $AQA_API_KEY" \
+  "https://api-aqa.usablenet.com/v3.1/$AQA_TEAM_SLUG/a11y/tests/rulesets"
 
-## Step 9: Group, Prioritize, and Display Issues
-
-Sort `ALL_ISSUES` by `impact` in this order: `critical` → `serious` → `moderate` → `minor`.
-
-Group by `ruleId` within each severity level. Display a full inventory before fixing:
-
-> Found **{N}** total accessibility issues across **{numFlows}** flow(s):
->
-> | Severity | Rule | Count |
-> |----------|------|-------|
-> | critical | color-contrast | 4 |
-> | serious  | image-alt | 7 |
-> | serious  | aria-required-attr | 3 |
-> | moderate | label | 5 |
-> | minor    | heading-order | 2 |
->
-> This run will fix issues **1–20** (highest severity first). Re-run this skill to fix the next chunk.
-
-Take the first 20 issues from the sorted list as the **current chunk**.
-
-## Step 10: Detect Package Manager
-
-Determine which package manager the project uses. Check in this order (first match wins):
-
-1. `package.json` → `packageManager` field (e.g. `"packageManager": "pnpm@9.0.0"`)
-2. `bun.lockb` or `bun.lock` exists → **bun**
-3. `pnpm-lock.yaml` exists → **pnpm**
-4. `yarn.lock` exists → **yarn**
-   - If `.yarnrc.yml` exists or `packageManager` field contains `yarn@4` or higher → **Yarn 4 (Berry)**
-   - Otherwise → **Yarn Classic (v1)**
-5. `package-lock.json` exists → **npm**
-
-If no lock file is found, ask the user which package manager to use.
-
-Use the detected package manager for ALL build and test commands throughout:
-
-| Action | npm | yarn v1 | yarn v4 | pnpm | bun |
-|--------|-----|---------|---------|------|-----|
-| Install | `npm ci` | `yarn install --frozen-lockfile` | `yarn install --immutable` | `pnpm install --frozen-lockfile` | `bun install --frozen-lockfile` |
-| Build | `npm run build` | `yarn build` | `yarn build` | `pnpm run build` | `bun run build` |
-| Test | `npm test` | `yarn test` | `yarn test` | `pnpm test` | `bun test` |
-
-## Step 11: Baseline Test Snapshot
-
-Before making any changes, run the full test suite and record the current state:
-
-1. Run the test command for the detected package manager
-2. Capture the full output
-3. Record the names/paths of any currently failing tests
-4. Store this as the **baseline failure list**
-
-Use the baseline throughout this workflow: only treat a test failure as a regression if it does NOT appear in the baseline. Never modify tests to make them pass — only fix source code.
-
-## Step 12: Map Issues to Source Files
-
-For each issue in the current chunk (up to 20):
-
-1. Use the `flowName` or flow URL to identify the page (e.g. `/about`, `/checkout`)
-2. Map the page path to a source file by looking for file-based routing in:
-   - `src/pages/`, `app/`, `pages/`, `src/views/`, `src/components/`
-   - Next.js: `/about` → `app/about/page.tsx` or `src/pages/about.tsx`
-   - Nuxt: `/about` → `pages/about.vue`
-   - Plain HTML: `/about` → `public/about.html` or `about.html`
-3. Use the `selector` and `html` fields to pinpoint the exact element. If the selector contains a class name, search for it: `grep -r "class-name" src/`
-
-**Skip an issue and add it to the manual review list** if any of the following apply:
-- The file path is inside `node_modules/`
-- The URL contains a CDN domain (e.g. `cdn.`, `unpkg.com`, `jsdelivr.net`, `cdnjs`)
-- The file is inside `dist/`, `build/`, `.next/`, `.nuxt/`, or has an auto-generated file comment
-- No matching source file can be found after a thorough search
-
-## Step 13: Remediate Issues (current chunk of up to 20)
-
-For each mapped issue, read the source file and apply the fix based on `ruleId`. Always consult the `solutions[]` array and `needFixTitle` for guidance on the specific fix. Process in the priority order from Step 9.
-
-If an issue cannot be auto-fixed (third-party component, architectural dependency, or insufficient context), add it to the **manual review list** and move on.
-
----
-
-### Color Contrast (WCAG 1.4.3 / 1.4.11) — `color-contrast`
-
-- Read the CSS or inline style for the flagged element's text color and background color
-- Calculate the contrast ratio. Required: 4.5:1 for normal text, 3:1 for large text (18pt or 14pt bold) and UI components
-- Adjust by darkening text color or lightening background (or vice versa), preserving the existing hue
-- Update CSS custom properties (`--color-*`) at the `:root` level when the color is defined there
-- Example: `color: #777777` on white background → `color: #595959` (achieves 7.0:1)
-- Do not replace colors with arbitrary values — match the design's color palette
-
-### Missing Alt Text (WCAG 1.1.1) — `image-alt`
-
-- Find the `<img>` element using the `selector`
-- **Decorative image** (background pattern, spacer, icon with adjacent visible label): add `alt=""` and optionally `role="presentation"`
-- **Informative image**: add descriptive alt text using surrounding context (heading, caption, filename). Keep under 125 characters. Do not prefix with "image of" or "photo of"
-- **Linked image** (`<a><img></a>`): alt text should describe the link destination, not the image appearance
-
-### ARIA Labels (WCAG 4.1.2) — `aria-required-attr`, `aria-label`, `aria-labelledby`
-
-- Find the interactive element (button, input, select, div with `role`) that has no accessible name
-- **Prefer** adding a visible `<label>` or visible text content inside the element
-- **Icon-only element** (no visible text): add `aria-label="descriptive text"` to the element
-- **Visible label exists elsewhere on page**: add `aria-labelledby="id-of-label-element"` and ensure the label element has a matching `id`
-- Do not add `aria-label` when the element already has a visible text label — that creates redundancy
-
-### Form Labels (WCAG 1.3.1, 3.3.2) — `label`
-
-- Find the `<input>`, `<select>`, or `<textarea>` without an associated `<label>`
-- Add `<label for="input-id">Label text</label>` near the input, connecting via matching `for`/`id` attributes
-- If the label must be visually hidden: use a `.sr-only` / `.visually-hidden` CSS class (not `display: none` or `visibility: hidden`, which hides from screen readers too)
-- If no such class exists in the project, add it to the global stylesheet:
-
-```css
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
+# List saved reviews
+curl -s -H "Accept: application/json" -H "X-Team: $AQA_API_KEY" \
+  "https://api-aqa.usablenet.com/v3.1/$AQA_TEAM_SLUG/a11y/tests/savedReviews"
 ```
 
-### Keyboard Navigation (WCAG 2.1.1, 2.4.3) — `keyboard`, `tabindex`
+### Scheduling
 
-- `tabindex="-1"` on an interactive element that should be reachable → remove it or change to `tabindex="0"`
-- Positive `tabindex` values (`tabindex="2"`, etc.) create unnatural focus order → remove all positive values and rely on DOM order
-- `<div>` or `<span>` with a click handler but no keyboard handler → replace with a semantic `<button>` element, or add `onKeyDown`/`onKeyPress` handlers for `Enter` and `Space`
-- Semantic replacement is preferred: `<div onClick>` → `<button>`, navigational elements → `<a href>`
+```bash
+# Schedule a test (e.g., daily for 7 days)
+curl -s -X POST -H "Accept: application/json" -H "X-Team: $AQA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"startTime": '"$(date +%s%3N)"', "execution": "day", "numRepeats": 7}' \
+  "https://api-aqa.usablenet.com/v3.1/$AQA_TEAM_SLUG/a11y/tests/$TEST_ID/scheduler/create"
 
-### Link Name / Button Name (WCAG 4.1.2) — `link-name`, `button-name`
-
-- Find the `<a>` or `<button>` with no accessible text (empty, or icon-only)
-- **Icon-only with SVG**: add `aria-label="descriptive text"` to the element, or add a `<title>` inside the SVG plus `aria-labelledby="svg-title-id"` on the element
-- **Generic link text** ("click here", "read more", "learn more"): replace with descriptive text, e.g. "Read more about {topic}" — infer the topic from the surrounding heading or section context
-- **Linked image with no alt text**: ensure the `<img>` inside has descriptive alt text (see alt text rule)
-
-### Document Title (WCAG 2.4.2) — `document-title`
-
-- Find the `<title>` tag in the HTML `<head>`
-- If missing: add `<title>{Page Name} | {Site Name}</title>` — infer page name from the `<h1>`, site name from other pages or `package.json#name`
-- If present but generic ("Untitled", empty string, or duplicate across pages): write a unique, descriptive title for each page
-
-### Heading Order (WCAG 1.3.1) — `heading-order`
-
-- Identify skipped heading levels, e.g. `<h1>` directly followed by `<h3>` with no `<h2>` in between
-- Correct the heading tag to the next sequential level
-- If the visual styling must be preserved, restyle with CSS (`font-size`, `font-weight`) rather than altering the tag
-- If the heading hierarchy is deeply structurally wrong (not a simple skip), add to the manual review list with an explanation
-
-### Landmark Regions (WCAG 1.3.1) — `landmark-*`, `region`
-
-- If the page has no `<main>` element: wrap the primary content in `<main>`
-- If multiple `<nav>` elements exist without `aria-label`: add distinct labels, e.g. `aria-label="Primary navigation"` and `aria-label="Footer navigation"`
-- If significant content exists outside any landmark region: wrap it in the appropriate element (`<main>`, `<aside>`, `<footer>`, `<header>`, `<section aria-label="...">`)
-
-### Focus Visible (WCAG 2.4.7) — `focus-visible`
-
-- Find CSS rules with `outline: none` or `outline: 0` on interactive elements (`:focus`, `:focus-visible`)
-- Remove the suppression rule, or replace it with a visible custom focus style:
-
-```css
-:focus-visible {
-  outline: 2px solid #005fcc;
-  outline-offset: 2px;
-}
+# Remove scheduler
+curl -s -X POST -H "Accept: application/json" -H "X-Team: $AQA_API_KEY" \
+  "https://api-aqa.usablenet.com/v3.1/$AQA_TEAM_SLUG/a11y/tests/$TEST_ID/scheduler/delete"
 ```
 
-Ensure the custom focus indicator has at least 3:1 contrast ratio against the adjacent background.
+Scheduler options: `execution` = `once` | `day` | `week` | `month`. For `week` add `dayOfWeek` (0-6), for `month` add `dayOfMonth` (1-28). `numRepeats` = 0 for infinite.
 
----
+### Devices & Locations
 
-## Step 14: Build and Test
+```bash
+# List available devices
+curl -s -H "Accept: application/json" -H "X-Team: $AQA_API_KEY" \
+  "https://api-aqa.usablenet.com/v3.1/$AQA_TEAM_SLUG/aqa/devices"
 
-After applying fixes for the current chunk:
+# List recording locations
+curl -s -H "Accept: application/json" -H "X-Team: $AQA_API_KEY" \
+  "https://api-aqa.usablenet.com/v3.1/$AQA_TEAM_SLUG/aqa/locations"
+```
 
-1. Run the build command for the detected package manager
-2. If build fails:
-   - Compare errors to known issues from the changes just made
-   - Attempt to fix — up to 3 retries
-   - If still failing after 3 attempts, stop and ask the user for help
-3. Run the test suite
-4. Compare failures to the baseline from Step 11
-   - **New failure** (not in baseline): attempt to fix — up to 3 retries
-   - **Pre-existing failure** (in baseline): note it in the PR, do not fix
-5. Never modify test files — only fix source code
+## Resolving User Intent
 
-If build and tests pass (accounting for pre-existing failures), proceed to PR creation.
+When the user provides partial information, resolve the target using this logic:
 
-## Step 15: Create Pull Request
+**Given a site name** (e.g., "example.com"):
+1. List suites → search names for case-insensitive match
+2. If one match → use it. If multiple → ask user. If none → show all suites.
 
-**Branch name**: `fix/aqa-accessibility-chunk-N-YYYY-MM-DD`
-(where N is the chunk number, e.g. `fix/aqa-accessibility-chunk-1-2025-03-26`)
+**Given a suite ID** (e.g., "TS612"):
+1. Get suite details directly to retrieve flows and crawlers.
 
-**Commit message** (conventional commits format):
+**Given a test ID** (e.g., "A3687-0"):
+1. Get test details directly — includes suite, flows, crawlers, and run history.
 
+**Given a run ID** (e.g., "A3687-1747995246509"):
+1. Get run details directly — includes status, flow/crawler summaries.
+
+**Given a flow ID** (e.g., "T4143") without suite context:
+1. List suites → get details of each → find which contains the flow.
+
+**User says "run my site" / "scan this site"**:
+1. Resolve suite → get flows/crawlers → create test → trigger run → poll → fetch issues.
+
+**User says "fix my site" / "fix accessibility issues"**:
+1. Follow the full remediation workflow below.
+
+## Full Remediation Workflow
+
+When the user wants to scan and fix accessibility issues, follow this end-to-end flow. Each step uses the APIs above.
+
+1. **Validate** environment variables and API connectivity
+2. **Resolve** the target suite (from site name, suite ID, or by listing)
+3. **Get suite details** to collect all flow IDs and crawler IDs
+4. **Create test** using all flows/crawlers with `rulesetPackId: "v2"`, `rulesetId: "wcag22"`
+5. **Trigger run** and **poll** every 10s until `status === "ready"` (timeout: 30 min)
+6. **Fetch issues** for every flow and page in the run
+7. **Sort by severity**: critical > serious > moderate > minor
+8. **Display inventory** grouped by ruleId and severity
+9. **Map issues to source files** using selectors, flow URLs, and file-based routing patterns
+10. **Remediate** up to 20 issues per chunk (see remediation guidance below)
+11. **Build and test** — verify no regressions
+12. **Create PR** with conventional commit format
+
+Skip files in `node_modules/`, `dist/`, `build/`, `.next/`, `.nuxt/`, CDN resources, or auto-generated files. Add these to a manual review list.
+
+## Remediation Guidance
+
+When fixing issues, always consult the issue's `solutions[]` array and `needFixTitle` for specific guidance. Process in severity order.
+
+| Rule ID | WCAG | Fix Approach |
+|---------|------|-------------|
+| `color-contrast` | 1.4.3/1.4.11 | Adjust text/background colors to meet 4.5:1 (normal) or 3:1 (large text). Preserve hue, update CSS custom properties at `:root` when applicable. |
+| `image-alt` | 1.1.1 | Decorative: `alt=""` + `role="presentation"`. Informative: descriptive alt under 125 chars. Linked: describe destination. |
+| `aria-required-attr`, `aria-label` | 4.1.2 | Prefer visible `<label>` or text content. Icon-only: add `aria-label`. Label elsewhere: use `aria-labelledby`. |
+| `label` | 1.3.1/3.3.2 | Add `<label for="id">`. Visually hidden: use `.sr-only` class (not `display:none`). |
+| `keyboard`, `tabindex` | 2.1.1/2.4.3 | Replace `<div onClick>` with `<button>`. Remove positive `tabindex`. Remove `tabindex="-1"` on interactive elements. |
+| `link-name`, `button-name` | 4.1.2 | Icon-only SVG: add `aria-label` or `<title>`. Generic text: make descriptive. |
+| `document-title` | 2.4.2 | Add/fix `<title>{Page} \| {Site}</title>` in `<head>`. |
+| `heading-order` | 1.3.1 | Fix skipped levels. Restyle with CSS if visual change isn't desired. |
+| `landmark-*`, `region` | 1.3.1 | Wrap content in `<main>`, label multiple `<nav>` elements. |
+| `focus-visible` | 2.4.7 | Remove `outline:none` on `:focus`. Add visible `:focus-visible` style with 3:1 contrast. |
+
+## PR Format
+
+**Branch**: `fix/aqa-accessibility-chunk-N-YYYY-MM-DD`
+
+**Commit** (conventional commits):
 ```
 fix(a11y): remediate UsableNet AQA violations — chunk N
 
 - Fixed X color contrast issues (WCAG 1.4.3)
-- Fixed Y missing alt text violations (WCAG 1.1.1)
-- Fixed Z ARIA label issues (WCAG 4.1.2)
-- Fixed W form label issues (WCAG 3.3.2)
-- Fixed V keyboard navigation issues (WCAG 2.1.1)
-Severity range: critical / serious
+- Fixed Y missing alt text (WCAG 1.1.1)
 Suite: {suiteName} | Run: {runId}
 ```
 
-**PR body**:
-
-```markdown
-## UsableNet AQA Accessibility Remediation — Chunk N of ~M
-
-**Severity range fixed in this chunk:** critical → serious (issues 1–20 of {total} total)
-**Suite:** {suiteName} (`{suiteId}`)
-**Run ID:** `{runId}` | Completed: {timestamp}
-
-### Summary
-
-| Violation Type | Found in chunk | Fixed | Manual Action Needed |
-|----------------|---------------|-------|---------------------|
-| Color Contrast | X | X | 0 |
-| Missing Alt Text | Y | Y | 0 |
-| ARIA Labels | Z | Z | 0 |
-| Form Labels | W | W | 0 |
-| Keyboard Navigation | V | V | 0 |
-| Other | U | U | U |
-
-### Files Changed
-
-- `src/components/Header.tsx` — Fixed color contrast on nav links: `#777777` → `#595959`
-- `src/pages/about.html` — Added alt text to hero image
-- `src/components/SearchBar.tsx` — Added `aria-label` to icon-only search button
-
-### Manual Actions Required
-
-- [ ] `{flowName}` / `{selector}` — {reason why auto-fix was skipped}
-- [ ] `{flowName}` / `{selector}` — Third-party widget, vendor fix required
-
-### Remaining Violations
-
-**{total - 20}** violations remain after this chunk. Re-run `/aqa-usablenet` to fix the next chunk.
-
-### Build & Test
-
-- Build: ✅ PASSING
-- Tests: ✅ PASSING
-- Pre-existing failures (not caused by this run, do not review): `{list}`
-```
+**PR body** should include: severity range, suite/run info, summary table (violation type / found / fixed / manual), files changed with descriptions, manual action items, remaining violation count.
