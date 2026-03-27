@@ -79,7 +79,19 @@ Identify which repo to query in Apiiro:
 **If the remote URL can't be determined** (no git remote, or not a git repo), ask the user:
 > I couldn't detect the repository. What is the repo name or identifier in Apiiro?
 
-## Step 5: Fetch & Categorize Findings
+## Step 5: Baseline Test Snapshot
+
+**Run this BEFORE making any code changes.**
+
+1. Run the test command for the detected package manager and capture full output
+2. Record every failing test by name/path → store as the **baseline failures list**
+3. If the build itself fails before tests can run → record the build error as a baseline failure too
+4. Inform the user:
+   > Baseline captured: **B** tests already failing before any changes. These will not be attributed to this run.
+
+This baseline is used in Step 11 to distinguish pre-existing failures from regressions introduced by fixes.
+
+## Step 6: Fetch & Categorize Findings
 
 Run the Apiiro CLI to get all security findings for this repo:
 
@@ -103,7 +115,7 @@ Display a summary to the user before proceeding:
 
 If there are zero findings, tell the user and stop — there is nothing to fix.
 
-## Step 6: Remediate — Package Vulnerabilities (SCA)
+## Step 7: Remediate — Package Vulnerabilities (SCA)
 
 For each vulnerable package identified:
 
@@ -115,7 +127,7 @@ For each vulnerable package identified:
    - Update code to accommodate the breaking changes
 4. After updating, verify the lock file was regenerated correctly
 
-## Step 7: Remediate — Code Vulnerabilities (SAST)
+## Step 8: Remediate — Code Vulnerabilities (SAST)
 
 For each SAST finding:
 
@@ -130,7 +142,7 @@ For each SAST finding:
    - **Other OWASP Top 10**: Follow the corresponding OWASP remediation guidance
 4. Ensure the fix preserves the intended functionality — don't break the feature
 
-## Step 8: Remediate — Secrets
+## Step 9: Remediate — Secrets
 
 For each exposed secret:
 
@@ -143,7 +155,7 @@ For each exposed secret:
 
 Do not attempt to rewrite git history to remove secrets — that is a manual decision for the user.
 
-## Step 9: Remediate — Misconfigurations & Other Findings
+## Step 10: Remediate — Misconfigurations & Other Findings
 
 For each remaining finding:
 
@@ -155,19 +167,7 @@ For each remaining finding:
 
 For any findings that **cannot be auto-fixed**, clearly list them with recommended manual actions at the end.
 
-## Step 9.5: Baseline Test Snapshot
-
-**Run this BEFORE making any code changes.**
-
-1. Run the test command for the detected package manager and capture full output
-2. Record every failing test by name/path → store as the **baseline failures list**
-3. If the build itself fails before tests can run → record the build error as a baseline failure too
-4. Inform the user:
-   > Baseline captured: **B** tests already failing before any changes. These will not be attributed to this run.
-
-This baseline is used in Step 10 to distinguish pre-existing failures from regressions you introduce.
-
-## Step 10: Build & Test
+## Step 11: Build & Test
 
 After all remediations:
 
@@ -181,7 +181,7 @@ After all remediations:
    - **Never modify tests** to make them pass — only fix the source code being tested
 3. If you cannot resolve a new failure after 3 attempts, stop and ask the user for help
 
-## Step 11: Create Pull Request
+## Step 12: Create Pull Request
 
 1. **Create a branch**: `fix/apiiro-security-remediation-YYYY-MM-DD` (use today's date)
 2. **Stage all changes**: `git add` the modified files (be specific — don't add unrelated files)
