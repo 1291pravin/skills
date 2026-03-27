@@ -73,6 +73,67 @@ Run `/sonarqube-fix` in your AI coding agent, or just ask:
 
 > "Fix all SonarQube issues in this repo"
 
+### triage-errors
+
+Automated error triage across GCP Cloud Logging and Sentry. Fetches errors from the last 24 hours, deduplicates across sources, and creates Jira tickets for untracked issues.
+
+**What it does:**
+
+1. Validates environment variables (`GCLOUD_PROJECT_ID`, `SENTRY_URL`, `SENTRY_AUTH_TOKEN`, `JIRA_URL`, etc.)
+2. Checks CLI availability (gcloud, sentry-cli, acli) — falls back to API when CLIs are missing
+3. Fetches GCP Cloud Logging errors (severity >= ERROR, last 24h)
+4. Fetches unresolved Sentry issues (last 24h) with full stacktraces
+5. Deduplicates errors across sources (groups GCP logs, cross-matches with Sentry issues)
+6. Checks existing Jira tickets to avoid creating duplicates
+7. Creates Jira tickets for new errors with full context (stacktrace, frequency, Sentry link, GCP log filter)
+8. Outputs a summary table of new and existing tickets
+
+**Setup:**
+
+```bash
+export GCLOUD_PROJECT_ID=my-project
+export SENTRY_URL=https://sentry.company.com
+export SENTRY_ORG=my-org
+export SENTRY_PROJECT=my-project
+export SENTRY_AUTH_TOKEN=your-token
+export JIRA_URL=https://company.atlassian.net
+export JIRA_PROJECT_KEY=ENG
+```
+
+**Usage:**
+
+Run `/triage-errors` in your AI coding agent, or just ask:
+
+> "Check for new errors in the last 24 hours"
+
+### fix-errors
+
+Automated error resolution from Jira ticket to PR. Picks up tickets created by `/triage-errors`, pulls full error context from Sentry and GCP, finds the relevant code, applies a fix, and creates a PR.
+
+**What it does:**
+
+1. Validates environment variables (same as triage-errors)
+2. Fetches open Jira tickets labeled `auto-triage` (created by `/triage-errors`)
+3. Lets you pick which ticket to work on
+4. Extracts error context from the ticket (Sentry URL, stacktrace, error signature)
+5. Fetches full error details from Sentry (stacktrace, tags, breadcrumbs) and GCP logs
+6. Analyzes root cause — identifies affected files, functions, and error type
+7. Finds the relevant code in the current repository
+8. Proposes a fix with diff preview and risk assessment — waits for your confirmation
+9. Applies the fix, runs build and tests (with baseline comparison)
+10. Creates a PR referencing the Jira ticket
+11. Updates the Jira ticket with the PR link and transitions status
+
+**Setup:**
+
+Same environment variables as `triage-errors` (see above). Also requires `gh` CLI for PR creation.
+
+**Usage:**
+
+Run `/fix-errors` in your AI coding agent, or just ask:
+
+> "Fix the error tickets from triage"
+
 ### package-version-update
 
 Automated dependency updates with a tiered approach. Scans all project dependencies, categorizes updates by risk level, and applies them with build/test verification at each stage.
