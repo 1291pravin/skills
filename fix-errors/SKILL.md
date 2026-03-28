@@ -29,6 +29,8 @@ Check all required environment variables at once. Do not stop at the first missi
 | `SENTRY_AUTH_TOKEN` | Sentry API auth token |
 | `JIRA_URL` | Jira instance URL (e.g., `https://company.atlassian.net`) — no trailing slash |
 | `JIRA_PROJECT_KEY` | Jira project key (e.g., `ENG`) |
+| `JIRA_EMAIL` | Jira user email (for Basic auth) |
+| `JIRA_API_TOKEN` | Jira API token |
 
 If any are missing, tell the user exactly which ones and provide copy-paste `export` commands:
 
@@ -43,38 +45,19 @@ Do not proceed until all required variables are set.
 
 ## Step 2: Check CLI Availability
 
-Check which CLI tools are installed. Each tool has an API fallback, so none are required — just record which path to use.
+Check which CLI tools are installed. GCP and Sentry have CLI options; Jira uses the REST API directly.
 
 ```bash
 command -v gcloud && echo "gcloud: available" || echo "gcloud: not found"
 command -v sentry-cli && echo "sentry-cli: available" || echo "sentry-cli: not found"
-command -v acli && echo "acli: available" || echo "acli: not found"
 command -v gh && echo "gh: available" || echo "gh: not found"
 ```
 
-If `acli` is not available, also check for Jira API fallback credentials:
-
-| Variable | Purpose |
-|----------|---------|
-| `JIRA_EMAIL` | Jira user email (for Basic auth) |
-| `JIRA_API_TOKEN` | Jira API token |
-
-If `acli` is not installed and `JIRA_EMAIL` + `JIRA_API_TOKEN` are also missing, stop and ask the user:
-> Neither `acli` CLI nor Jira API credentials (`JIRA_EMAIL`, `JIRA_API_TOKEN`) are available. Please install acli or set the API credentials.
-
-Report which tools will use CLI vs API fallback and proceed.
+Report which tools are available and proceed. Jira operations always use the REST API.
 
 ## Step 3: Fetch Open Triage Tickets
 
-Fetch all open Jira tickets with the `auto-triage` label (created by `/triage-errors`).
-
-**If acli CLI is available:**
-
-```bash
-acli issue list -p "$JIRA_PROJECT_KEY" -q "labels = auto-triage AND status != Done ORDER BY created DESC"
-```
-
-**If using API fallback:**
+Fetch all open Jira tickets with the `auto-triage` label (created by `/triage-errors`) via the Jira REST API:
 
 ```bash
 curl -s \
@@ -115,15 +98,7 @@ Wait for the user's selection before proceeding.
 
 If the user selects by number, map it to the corresponding ticket key from the list.
 
-Fetch the full ticket description for the selected ticket:
-
-**If acli CLI is available:**
-
-```bash
-acli issue view <TICKET_KEY>
-```
-
-**If using API fallback:**
+Fetch the full ticket description for the selected ticket via the Jira REST API:
 
 ```bash
 curl -s \
@@ -402,14 +377,6 @@ After the PR is created, update the Jira ticket.
 
 ### 15a: Add Comment with PR URL
 
-**If acli CLI is available:**
-
-```bash
-acli issue comment <TICKET_KEY> --comment "Fix PR created: <PR_URL>"
-```
-
-**If using API fallback:**
-
 ```bash
 curl -s -X POST \
   "$JIRA_URL/rest/api/3/issue/<TICKET_KEY>/comment" \
@@ -418,17 +385,19 @@ curl -s -X POST \
   -d '{"body": {"type": "doc", "version": 1, "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Fix PR created: <PR_URL>"}]}]}}'
 ```
 
+If the API returns a 404 or error on `/rest/api/3/`, retry with `/rest/api/2/` using plain text body:
+
+```bash
+curl -s -X POST \
+  "$JIRA_URL/rest/api/2/issue/<TICKET_KEY>/comment" \
+  -H "Content-Type: application/json" \
+  -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
+  -d '{"body": "Fix PR created: <PR_URL>"}'
+```
+
 ### 15b: Transition Ticket Status
 
 First, get available transitions:
-
-**If acli CLI is available:**
-
-```bash
-acli issue transitions <TICKET_KEY>
-```
-
-**If using API fallback:**
 
 ```bash
 curl -s \
@@ -437,14 +406,6 @@ curl -s \
 ```
 
 Look for a transition named "In Review", "In Progress", "Code Review", or similar. If found, apply it:
-
-**If acli CLI is available:**
-
-```bash
-acli issue update <TICKET_KEY> --transition "In Review"
-```
-
-**If using API fallback:**
 
 ```bash
 curl -s -X POST \

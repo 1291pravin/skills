@@ -29,6 +29,8 @@ Check all required environment variables at once. Do not stop at the first missi
 | `SENTRY_AUTH_TOKEN` | Sentry API auth token |
 | `JIRA_URL` | Jira instance URL (e.g., `https://company.atlassian.net`) — no trailing slash |
 | `JIRA_PROJECT_KEY` | Jira project key (e.g., `ENG`) |
+| `JIRA_EMAIL` | Jira user email (for Basic auth) |
+| `JIRA_API_TOKEN` | Jira API token |
 
 If any are missing, tell the user exactly which ones and provide copy-paste `export` commands:
 
@@ -43,25 +45,14 @@ Do not proceed until all required variables are set.
 
 ## Step 2: Check CLI Availability
 
-Check which CLI tools are installed. Each tool has an API fallback, so none are required — just record which path to use.
+Check which CLI tools are installed. GCP and Sentry have CLI options; Jira uses the REST API directly.
 
 ```bash
 command -v gcloud && echo "gcloud: available" || echo "gcloud: not found"
 command -v sentry-cli && echo "sentry-cli: available" || echo "sentry-cli: not found"
-command -v acli && echo "acli: available" || echo "acli: not found"
 ```
 
-If `acli` is not available, also check for Jira API fallback credentials:
-
-| Variable | Purpose |
-|----------|---------|
-| `JIRA_EMAIL` | Jira user email (for Basic auth) |
-| `JIRA_API_TOKEN` | Jira API token |
-
-If `acli` is not installed and `JIRA_EMAIL` + `JIRA_API_TOKEN` are also missing, stop and ask the user:
-> Neither `acli` CLI nor Jira API credentials (`JIRA_EMAIL`, `JIRA_API_TOKEN`) are available. Please install acli or set the API credentials.
-
-Report which tools will use CLI vs API fallback and proceed.
+Report which tools are available and proceed. Jira operations always use the REST API.
 
 ## Step 3: Fetch GCP Errors (Last 24h)
 
@@ -190,15 +181,7 @@ Sort by frequency (highest first).
 
 For each unified error, check if a Jira ticket already exists to avoid duplicates.
 
-**If acli CLI is available:**
-
-For each error signature, search:
-
-```bash
-acli issue list -p "$JIRA_PROJECT_KEY" -q "labels = auto-triage AND status != Done AND summary ~ \"<first 50 chars of error signature>\""
-```
-
-**If using API fallback:**
+For each error signature, search via the Jira REST API:
 
 ```bash
 curl -s \
@@ -256,18 +239,7 @@ h2. Notes
 Created automatically by /triage-errors on <today's date>.
 ```
 
-**If acli CLI is available:**
-
-```bash
-acli issue create \
-  -P "$JIRA_PROJECT_KEY" \
-  --type Bug \
-  --summary "<error signature>" \
-  --description "<description from template above>" \
-  --labels auto-triage
-```
-
-**If using API fallback:**
+Create the ticket via the Jira REST API:
 
 ```bash
 curl -s -X POST \
