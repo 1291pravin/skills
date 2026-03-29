@@ -1,19 +1,20 @@
 ---
 name: apiiro-fix
 description: >
-  Fetch and fix all Apiiro security findings for the current repository.
+  Fetch and fix Apiiro security findings for the current repository.
   Handles SCA (vulnerable packages), SAST (code vulnerabilities), secrets
   exposure, misconfigurations, PII detection, and supply chain issues.
-  Installs Apiiro CLI if missing, authenticates, detects the package manager,
-  remediates all issues, builds, tests, and creates a PR. Use this skill
-  whenever the user mentions Apiiro, security alerts, vulnerability
-  remediation, dependency updates for security, or wants to fix security
-  issues flagged by Apiiro, even if they don't explicitly say "apiiro-fix".
+  Processes up to 20 findings per run in priority order, creates a focused
+  PR per chunk, and automatically resumes from where the last session left
+  off. Use this skill whenever the user mentions Apiiro, security alerts,
+  vulnerability remediation, dependency updates for security, or wants to
+  fix security issues flagged by Apiiro, even if they don't explicitly say
+  "apiiro-fix".
 ---
 
 # Apiiro Security Remediation
 
-Automate the full Apiiro security remediation workflow: detect issues, fix them, verify the fixes, and create a PR. Follow each step in order.
+Automate the full Apiiro security remediation workflow: detect issues, fix them in priority order (20 per run), verify the fixes, and create a focused PR per chunk. Automatically resumes from previous sessions. Follow each step in order.
 
 ## Step 1: Check & Install Apiiro CLI
 
@@ -79,7 +80,28 @@ Identify which repo to query in Apiiro:
 **If the remote URL can't be determined** (no git remote, or not a git repo), ask the user:
 > I couldn't detect the repository. What is the repo name or identifier in Apiiro?
 
-## Step 5: Baseline Test Snapshot
+## Step 5: Resume Detection
+
+Before making changes, check if previous chunks were already processed in earlier sessions:
+
+1. **List existing chunk branches** (local and remote):
+   ```bash
+   git branch -a --list '*fix/apiiro-security-chunk-*'
+   ```
+2. **Extract the highest chunk number** from matching branches (e.g., `fix/apiiro-security-chunk-2-2026-03-28` → chunk 2)
+3. **Check PR status** for each chunk branch using `gh pr list --head <branch> --state all --json number,state,title`
+4. **Calculate resume point**:
+   - Count all chunk branches that have an open or merged PR → multiply by 20 = findings already handled
+   - The next chunk number = highest chunk number + 1
+   - Findings to skip = (next chunk number - 1) × 20
+5. **Inform the user** if resuming:
+   > Resuming from chunk **N**. Found **X** existing chunk branches with PRs. Skipping the first **Y** findings (already handled in previous chunks).
+
+If no previous chunk branches exist, start from chunk 1 with zero findings to skip.
+
+**Also check for legacy single-run branches** (`fix/apiiro-security-remediation-*`). If one exists with an open or merged PR, count the findings it addressed (from the PR body summary table) and include them in the skip count.
+
+## Step 6: Baseline Test Snapshot
 
 **Run this BEFORE making any code changes.**
 
@@ -89,9 +111,9 @@ Identify which repo to query in Apiiro:
 4. Inform the user:
    > Baseline captured: **B** tests already failing before any changes. These will not be attributed to this run.
 
-This baseline is used in Step 11 to distinguish pre-existing failures from regressions introduced by fixes.
+This baseline is used in Step 12 to distinguish pre-existing failures from regressions introduced by fixes.
 
-## Step 6: Fetch & Categorize Findings
+## Step 7: Fetch & Categorize Findings
 
 Run the Apiiro CLI to get all security findings for this repo:
 
@@ -110,12 +132,33 @@ Parse the JSON output and categorize findings into:
 - **Supply Chain**: CI/CD misconfigs, weak branch protections
 - **Other**: Anything that doesn't fit the above
 
+**Sort all findings by priority:**
+1. Secrets (immediate risk)
+2. Vulnerabilities — SCA (CRITICAL → HIGH → MEDIUM → LOW)
+3. Vulnerabilities — SAST (CRITICAL → HIGH → MEDIUM → LOW)
+4. Misconfigurations
+5. PII/PHI/PCI
+6. Supply Chain
+7. Other
+
+**Apply resume offset**: Skip the first S findings (where S = findings already handled from Step 5). Select the next 20 findings for this chunk.
+
 Display a summary to the user before proceeding:
-> Found **X** package vulnerabilities, **Y** code issues, **Z** exposed secrets, and **W** other findings. Proceeding to remediate all.
+> Found **N** total findings. Skipping **S** already handled. This run will fix findings **S+1 – S+20**.
+>
+> | Category | Total | This Chunk | Already Handled |
+> |----------|-------|------------|-----------------|
+> | SCA | ... | ... | ... |
+> | SAST | ... | ... | ... |
+> | Secrets | ... | ... | ... |
+> | Misconfigurations | ... | ... | ... |
+> | Other | ... | ... | ... |
 
-If there are zero findings, tell the user and stop — there is nothing to fix.
+If zero remaining findings (after skipping already-handled ones), tell the user all findings have been addressed and stop.
 
-## Step 7: Remediate — Package Vulnerabilities (SCA)
+## Step 8: Remediate — Package Vulnerabilities (SCA)
+
+**Only process SCA findings that fall within this chunk's 20-finding window.**
 
 For each vulnerable package identified:
 
@@ -127,7 +170,9 @@ For each vulnerable package identified:
    - Update code to accommodate the breaking changes
 4. After updating, verify the lock file was regenerated correctly
 
-## Step 8: Remediate — Code Vulnerabilities (SAST)
+## Step 9: Remediate — Code Vulnerabilities (SAST)
+
+**Only process SAST findings that fall within this chunk's 20-finding window.**
 
 For each SAST finding:
 
@@ -142,7 +187,9 @@ For each SAST finding:
    - **Other OWASP Top 10**: Follow the corresponding OWASP remediation guidance
 4. Ensure the fix preserves the intended functionality — don't break the feature
 
-## Step 9: Remediate — Secrets
+## Step 10: Remediate — Secrets
+
+**Only process Secret findings that fall within this chunk's 20-finding window.**
 
 For each exposed secret:
 
@@ -155,7 +202,9 @@ For each exposed secret:
 
 Do not attempt to rewrite git history to remove secrets — that is a manual decision for the user.
 
-## Step 10: Remediate — Misconfigurations & Other Findings
+## Step 11: Remediate — Misconfigurations & Other Findings
+
+**Only process findings that fall within this chunk's 20-finding window.**
 
 For each remaining finding:
 
@@ -167,9 +216,9 @@ For each remaining finding:
 
 For any findings that **cannot be auto-fixed**, clearly list them with recommended manual actions at the end.
 
-## Step 11: Build & Test
+## Step 12: Build & Test
 
-After all remediations:
+After all remediations in this chunk:
 
 1. **Build** the project using the detected package manager's build command
    - If the build fails: compare the error to the baseline
@@ -181,33 +230,37 @@ After all remediations:
    - **Never modify tests** to make them pass — only fix the source code being tested
 3. If you cannot resolve a new failure after 3 attempts, stop and ask the user for help
 
-## Step 12: Create Pull Request
+## Step 13: Create Pull Request
 
-1. **Create a branch**: `fix/apiiro-security-remediation-YYYY-MM-DD` (use today's date)
+1. **Create a branch**: `fix/apiiro-security-chunk-N-YYYY-MM-DD`
+   (N = chunk number from Step 5 resume detection; use today's date)
 2. **Stage all changes**: `git add` the modified files (be specific — don't add unrelated files)
 3. **Commit** with a descriptive message:
    ```
-   fix(security): remediate Apiiro security findings
+   fix(security): remediate Apiiro security findings — chunk N
 
    - Updated X vulnerable packages
    - Fixed Y code vulnerabilities (SAST)
    - Removed Z exposed secrets
    - Fixed W misconfigurations
+   Severity range: CRITICAL/HIGH
    ```
 4. **Push** the branch to the remote
 5. **Create a PR** with a comprehensive body:
 
    ```markdown
-   ## Security Remediation — Apiiro Findings
+   ## Security Remediation — Apiiro Findings — Chunk N of ~M
+
+   **Findings S+1 – S+20 of T total** (sorted by priority)
 
    ### Summary
-   | Category | Found | Fixed | Manual Action Needed |
-   |----------|-------|-------|---------------------|
-   | Package Vulnerabilities (SCA) | X | X | 0 |
-   | Code Vulnerabilities (SAST) | Y | Y | 0 |
-   | Exposed Secrets | Z | Z | Z (rotate credentials) |
-   | Misconfigurations | W | W | 0 |
-   | Other | N | N | N |
+   | Category | Total | This Chunk | Fixed | Manual Action Needed |
+   |----------|-------|------------|-------|---------------------|
+   | Package Vulnerabilities (SCA) | X | X | X | 0 |
+   | Code Vulnerabilities (SAST) | Y | Y | Y | 0 |
+   | Exposed Secrets | Z | Z | Z | Z (rotate credentials) |
+   | Misconfigurations | W | W | W | 0 |
+   | Other | N | N | N | N |
 
    ### Package Updates
    | Package | Old Version | New Version | CVE/Issue |
@@ -223,6 +276,9 @@ After all remediations:
    - [ ] Enable branch protection on `main` branch
    - [ ] Review license compliance for `some-package`
 
+   ### Remaining Findings
+   **R** findings remain. Run `/apiiro-fix` again to fix the next chunk.
+
    ### Build & Test Status
    - Build: PASSING
    - Tests: PASSING (X new failures fixed; B pre-existing failures unchanged — not caused by this run)
@@ -230,3 +286,4 @@ After all remediations:
    ```
 
 6. Share the PR URL with the user
+7. Remind the user how many findings remain and to run `/apiiro-fix` again for the next chunk

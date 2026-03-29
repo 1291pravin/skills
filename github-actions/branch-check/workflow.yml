@@ -1,0 +1,36 @@
+name: Branch Name Check
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    branches: [dev]
+
+jobs:
+  check-branch-name:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate branch name contains ticket ID
+        run: |
+          BRANCH="${{ github.head_ref }}"
+          echo "Branch: $BRANCH"
+
+          # Allow release and hotfix branches without ticket ID format
+          if [[ "$BRANCH" =~ ^release/ ]] || [[ "$BRANCH" =~ ^main$ ]]; then
+            echo "✓ Release/main branch — skipping ticket ID check"
+            exit 0
+          fi
+
+          # Check for ticket ID pattern: PREFIX-123
+          if [[ "$BRANCH" =~ [A-Z]+-[0-9]+ ]]; then
+            TICKET=$(echo "$BRANCH" | grep -oE '[A-Z]+-[0-9]+' | head -1)
+            echo "✓ Found ticket ID: $TICKET"
+          else
+            echo "✗ Branch name '$BRANCH' does not contain a Jira ticket ID."
+            echo ""
+            echo "Expected format: feature/<TICKET_KEY>-<description>"
+            echo "Examples:"
+            echo "  feature/ENG-123-add-cart-drawer"
+            echo "  bugfix/ENG-456-fix-null-price"
+            echo "  hotfix/ENG-789-fix-checkout-crash"
+            exit 1
+          fi

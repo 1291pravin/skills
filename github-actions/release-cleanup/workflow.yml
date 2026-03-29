@@ -1,0 +1,65 @@
+name: Release Preview Cleanup
+
+on:
+  # Triggered manually after deployment, or automatically on tag push
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version to clean up (e.g., v1.3.0)"
+        required: true
+        type: string
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  cleanup-release-preview:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Determine version
+        id: version
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            # Extract from tag: refs/tags/v1.3.0 -> v1.3.0
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Cleaning up release preview for: $VERSION"
+
+      - name: Delete release preview themes from all stores
+        env:
+          SHOPIFY_STORES_JSON: ${{ secrets.SHOPIFY_STORES_JSON }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          THEME_NAME="release-preview-$VERSION"
+          echo "Cleaning up theme: $THEME_NAME"
+
+          echo "$SHOPIFY_STORES_JSON" | jq -c '.[]' | while read -r store; do
+            STORE_NAME=$(echo "$store" | jq -r '.name')
+            STORE_URL=$(echo "$store" | jq -r '.url')
+            STORE_TOKEN=$(echo "$store" | jq -r '.token')
+
+            echo "Checking $STORE_NAME ($STORE_URL)..."
+
+            THEME_ID=$(curl -s \
+              "https://$STORE_URL/admin/api/2024-01/themes.json" \
+              -H "X-Shopify-Access-Token: $STORE_TOKEN" \
+              | jq -r ".themes[] | select(.name == \"$THEME_NAME\") | .id")
+
+            if [ -n "$THEME_ID" ] && [ "$THEME_ID" != "null" ]; then
+              echo "  Deleting theme $THEME_NAME (ID: $THEME_ID)..."
+              HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
+                "https://$STORE_URL/admin/api/2024-01/themes/$THEME_ID.json" \
+                -H "X-Shopify-Access-Token: $STORE_TOKEN")
+
+              if [ "$HTTP_STATUS" = "200" ]; then
+                echo "  ✓ Deleted from $STORE_NAME"
+              else
+                echo "  ✗ Failed to delete from $STORE_NAME (HTTP $HTTP_STATUS)"
+              fi
+            else
+              echo "  — No release preview found on $STORE_NAME"
+            fi
+          done

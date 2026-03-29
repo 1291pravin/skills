@@ -121,7 +121,28 @@ Use the detected package manager for ALL commands throughout the workflow:
 
 This baseline is used in Step 8 to distinguish pre-existing failures from regressions introduced by fixes.
 
-## Step 6: Fetch & Prioritize Issues
+## Step 6: Resume Detection
+
+Before fetching issues, check if previous chunks were already processed in earlier sessions:
+
+1. **List existing chunk branches** (local and remote):
+   ```bash
+   git branch -a --list '*fix/sonarqube-chunk-*'
+   ```
+2. **Extract the highest chunk number** from matching branches (e.g., `fix/sonarqube-chunk-3-2026-03-28` → chunk 3)
+3. **Check PR status** for each chunk branch using `gh pr list --head <branch> --state all --json number,state,title`
+4. **Calculate resume point**:
+   - Count all chunk branches that have an open or merged PR → multiply by 20 = issues already handled
+   - The next chunk number = highest chunk number + 1
+   - Issues to skip = (next chunk number - 1) × 20
+5. **Inform the user** if resuming:
+   > Resuming from chunk **N**. Found **X** existing chunk branches with PRs. Skipping the first **Y** issues (already handled in previous chunks).
+
+If no previous chunk branches exist, start from chunk 1 with zero issues to skip.
+
+**Important**: The resume logic assumes issues are fetched and sorted identically each time (same severity ordering). Since we always sort by severity → type, the ordering is deterministic for a given set of open issues. If a previous chunk's PR was merged and SonarQube re-scanned, those issues will no longer appear as OPEN, and the skip count adjusts naturally.
+
+## Step 7: Fetch & Prioritize Issues
 
 **Fetch all open issues** (paginate until all pages are retrieved):
 
@@ -164,13 +185,15 @@ Within the same severity, order by type: Vulnerabilities → Security Hotspots �
 > | MINOR    | ...  | ...             | ...      | ...         |
 > | INFO     | ...  | ...             | ...      | ...         |
 >
-> This run will fix issues **1–20** (highest severity first). Run `/sonarqube-fix` again to continue with the next chunk.
+> This run will fix issues **S+1 – S+20** (highest severity first), where S = issues already handled in previous chunks. Run `/sonarqube-fix` again to continue with the next chunk.
 
-If zero issues are found, tell the user and stop — there is nothing to fix.
+If zero remaining issues are found (after skipping already-handled ones), tell the user all issues have been addressed and stop.
 
-## Step 7: Remediate the Chunk (issues 1–20)
+After displaying the inventory, **skip the first S issues** (where S = issues already handled from Step 6) and select the next 20 for this chunk.
 
-Process each issue in priority order. Read the flagged file at the line number specified in each finding before applying any fix.
+## Step 8: Remediate the Chunk
+
+Process issues **S+1 through S+20** (where S = issues skipped from resume detection) in priority order. Use the chunk number determined in Step 6. Read the flagged file at the line number specified in each finding before applying any fix.
 
 For any issue that **cannot be auto-fixed** (requires architectural change, admin access, or is genuinely ambiguous), add it to a "manual action needed" list and move on — do not block the run.
 
@@ -214,7 +237,7 @@ Only fix Code Smells of MAJOR severity or higher unless this chunk has no higher
 
 Limit refactoring strictly to what SonarQube flagged — do not clean up surrounding code.
 
-## Step 8: Build & Test
+## Step 9: Build & Test
 
 After applying all fixes in the chunk:
 
@@ -230,10 +253,10 @@ After applying all fixes in the chunk:
 
 3. If a new failure cannot be resolved after 3 attempts, stop and ask the user for help before proceeding
 
-## Step 9: Create Pull Request
+## Step 10: Create Pull Request
 
 1. **Branch name**: `fix/sonarqube-chunk-N-YYYY-MM-DD`
-   (N = chunk number starting from 1; use today's date)
+   (N = chunk number from Step 6 resume detection; use today's date)
 2. **Stage** only the files modified during remediation — do not add unrelated files
 3. **Commit** with a descriptive message:
    ```
@@ -270,7 +293,7 @@ After applying all fixes in the chunk:
    - [ ] Architectural refactor needed: `UserService.processAll()` complexity > 30 (exceeds auto-fix threshold)
 
    ### Remaining Issues
-   **N - 20** issues remain. Run `/sonarqube-fix` again to fix the next chunk (issues 21–40).
+   **R** issues remain (total minus all issues handled across all chunks). Run `/sonarqube-fix` again to fix the next chunk.
 
    ### Build & Test
    - Build: PASSING

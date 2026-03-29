@@ -287,16 +287,38 @@ When the user wants to scan and fix accessibility issues, follow this end-to-end
 
 1. **Validate** environment variables and API connectivity
 2. **Resolve** the target suite (from site name, suite ID, or by listing)
-3. **Get suite details** to collect all flow IDs and crawler IDs
-4. **Create test** using all flows/crawlers with `rulesetPackId: "v2"`, `rulesetId: "wcag22"`
-5. **Trigger run** and **poll** every 10s until `status === "ready"` (timeout: 30 min)
-6. **Fetch issues** for every flow and page in the run
-7. **Sort by severity**: critical > serious > moderate > minor
-8. **Display inventory** grouped by ruleId and severity
-9. **Map issues to source files** using selectors, flow URLs, and file-based routing patterns
-10. **Remediate** up to 20 issues per chunk (see remediation guidance below)
-11. **Build and test** — verify no regressions
-12. **Create PR** with conventional commit format
+3. **Resume detection** — check for previous chunks (see details below)
+4. **Get suite details** to collect all flow IDs and crawler IDs
+5. **Create test** using all flows/crawlers with `rulesetPackId: "v2"`, `rulesetId: "wcag22"`
+6. **Trigger run** and **poll** every 10s until `status === "ready"` (timeout: 30 min)
+7. **Fetch issues** for every flow and page in the run
+8. **Sort by severity**: critical > serious > moderate > minor
+9. **Skip already-handled issues** based on resume detection, then **display inventory** grouped by ruleId and severity
+10. **Map issues to source files** using selectors, flow URLs, and file-based routing patterns
+11. **Remediate** up to 20 issues per chunk (see remediation guidance below)
+12. **Build and test** — verify no regressions
+13. **Create PR** with conventional commit format
+
+### Step 3: Resume Detection
+
+Before scanning, check if previous chunks were already processed in earlier sessions:
+
+1. **List existing chunk branches** (local and remote):
+   ```bash
+   git branch -a --list '*fix/aqa-accessibility-chunk-*'
+   ```
+2. **Extract the highest chunk number** from matching branches (e.g., `fix/aqa-accessibility-chunk-3-2026-03-28` → chunk 3)
+3. **Check PR status** for each chunk branch using `gh pr list --head <branch> --state all --json number,state,title`
+4. **Calculate resume point**:
+   - Count all chunk branches that have an open or merged PR → multiply by 20 = issues already handled
+   - The next chunk number = highest chunk number + 1
+   - Issues to skip = (next chunk number - 1) × 20
+5. **Inform the user** if resuming:
+   > Resuming from chunk **N**. Found **X** existing chunk branches with PRs. Skipping the first **Y** issues (already handled in previous chunks).
+
+If no previous chunk branches exist, start from chunk 1 with zero issues to skip.
+
+**Important**: The resume logic assumes issues are sorted identically each time (same severity ordering: critical > serious > moderate > minor, then by ruleId). The ordering is deterministic for a given set of issues from the same run. If a previous chunk's PR was merged and the fixes deployed, a new scan may return fewer issues — the skip count adjusts naturally since resolved issues won't appear in new results.
 
 Skip files in `node_modules/`, `dist/`, `build/`, `.next/`, `.nuxt/`, CDN resources, or auto-generated files. Add these to a manual review list.
 
@@ -319,7 +341,7 @@ When fixing issues, always consult the issue's `solutions[]` array and `needFixT
 
 ## PR Format
 
-**Branch**: `fix/aqa-accessibility-chunk-N-YYYY-MM-DD`
+**Branch**: `fix/aqa-accessibility-chunk-N-YYYY-MM-DD` (N = chunk number from resume detection)
 
 **Commit** (conventional commits):
 ```
