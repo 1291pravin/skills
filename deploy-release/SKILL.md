@@ -1,19 +1,17 @@
 ---
 name: deploy-release
 description: >
-  Deploy a tested release to all Shopify stores as unpublished themes, tag the
-  version in git, merge the release branch to main and dev, and transition all
-  Jira tickets to Done. This is the most operationally critical skill in the
-  workflow and is used by the lead to ship releases end-to-end. Use this skill
-  whenever the user says "deploy release", "deploy RELEASE-123", "push release
-  to production", "ship release", "deploy v1.3.0", or otherwise indicates they
-  want to deploy a release to Shopify stores, even if they don't explicitly say
-  "deploy-release".
+  Finalize a tested release: tag the version in git, merge the release branch
+  to main and dev, and transition all Jira tickets to Done. The release theme
+  is already deployed to Shopify stores by the release-preview GitHub Action —
+  the business publishes it when ready. Use this skill whenever the user says
+  "deploy release", "deploy RELEASE-123", "ship release", "deploy v1.3.0",
+  or otherwise indicates they want to finalize a release.
 ---
 
-# Deploy Release to Shopify Stores
+# Finalize Release
 
-Deploy a tested release to all Shopify stores as unpublished themes, tag the version, merge the release branch, and close out Jira. Follow each step in order.
+Tag the release, merge the release branch, and close out Jira. The release theme is already on all Shopify stores (deployed by the release-preview GitHub Action). Follow each step in order.
 
 ## Step 1: Validate Environment Variables
 
@@ -25,16 +23,6 @@ Verify that all required environment variables are set:
 | `JIRA_EMAIL` | Jira account email for API authentication |
 | `JIRA_API_TOKEN` | Jira API token (generated at https://id.atlassian.com/manage-profile/security/api-tokens) |
 | `JIRA_PROJECT_KEY` | Jira project key (e.g., `RELEASE`) |
-| `SHOPIFY_STORES_JSON` | JSON array of store objects (see below) |
-
-`SHOPIFY_STORES_JSON` format:
-
-```json
-[
-  {"name": "US", "url": "store-us.myshopify.com", "token": "shpat_xxx"},
-  {"name": "CA", "url": "store-ca.myshopify.com", "token": "shpat_yyy"}
-]
-```
 
 For any missing variable, provide the user with the export command:
 
@@ -43,16 +31,7 @@ export JIRA_URL="https://colgate.atlassian.net"
 export JIRA_EMAIL="your-email@colgate.com"
 export JIRA_API_TOKEN="your-api-token"
 export JIRA_PROJECT_KEY="RELEASE"
-export SHOPIFY_STORES_JSON='[{"name":"US","url":"store-us.myshopify.com","token":"shpat_xxx"}]'
 ```
-
-Validate `SHOPIFY_STORES_JSON` is valid JSON:
-
-```bash
-echo "$SHOPIFY_STORES_JSON" | jq .
-```
-
-If `jq` reports a parse error, stop and ask the user to fix the JSON.
 
 ## Step 2: Identify Release
 
@@ -93,7 +72,7 @@ curl -s -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
   "$JIRA_URL/rest/api/3/issue/<TICKET_KEY>?fields=summary,status,issuetype"
 ```
 
-Build a table of what is being deployed:
+Build a table of what is being released:
 
 ```
 | Ticket | Summary | Type | Status |
@@ -105,9 +84,9 @@ Build a table of what is being deployed:
 
 Show this table to the user before proceeding.
 
-## Step 4: Pre-Deploy Checks
+## Step 4: Pre-Release Checks
 
-Perform all three checks before deploying:
+Perform all three checks before finalizing:
 
 ### 1. Check for open bugs
 
@@ -125,7 +104,7 @@ curl -s -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
 
 If bugs are found, warn the user:
 
-> **Warning:** 2 open bugs found linked to this release. Deploy anyway?
+> **Warning:** 2 open bugs found linked to this release. Continue anyway?
 
 Show the bug details and wait for confirmation. Do not proceed without a "yes."
 
@@ -146,7 +125,7 @@ git checkout release/v1.3.0
 npm run build
 ```
 
-If the build fails, stop and show the error output. Do not deploy a broken build.
+If the build fails, stop and show the error output. Do not proceed with a broken build.
 
 ## Step 5: Tag the Release
 
@@ -161,56 +140,7 @@ git push origin v1.3.0
 
 If the tag already exists, inform the user and ask whether to overwrite or skip.
 
-## Step 6: Deploy to Shopify Stores
-
-Iterate over every store in `SHOPIFY_STORES_JSON`. For each store, deploy the theme as **unpublished**:
-
-```bash
-shopify theme push \
-  --store="$STORE_URL" \
-  --password="$STORE_TOKEN" \
-  --unpublished \
-  --theme="Release v1.3.0" \
-  --ignore=config/settings_data.json
-```
-
-**Important rules:**
-
-- Deploy as **UNPUBLISHED**. The business publishes manually in Shopify admin.
-- If a store fails, log the error and continue with the remaining stores. Do not abort all deployments because one store failed.
-- After all stores have been attempted, show a deployment status table:
-
-```
-| Store | Status | Error |
-|-------|--------|-------|
-| US | Deployed | — |
-| CA | Failed | Connection timeout |
-```
-
-If any store failed, ask the user whether to retry the failed stores.
-
-## Step 7: Verify Deployments
-
-For each successfully deployed store, verify the theme was created via the Shopify API:
-
-```bash
-curl -s "https://$STORE_URL/admin/api/2024-01/themes.json" \
-  -H "X-Shopify-Access-Token: $STORE_TOKEN" \
-  | jq '.themes[] | select(.name == "Release v1.3.0") | {id, name, role}'
-```
-
-Show a verification table with theme IDs:
-
-```
-| Store | Theme Name | Theme ID | Role |
-|-------|------------|----------|------|
-| US | Release v1.3.0 | 12345 | unpublished |
-| CA | Release v1.3.0 | 67890 | unpublished |
-```
-
-If a theme cannot be found for a store that reported success, flag it as a discrepancy and ask the user how to proceed.
-
-## Step 8: Merge Release Branch
+## Step 6: Merge Release Branch
 
 ### 1. Merge release to main
 
@@ -232,7 +162,7 @@ git push origin dev
 
 If merge conflicts occur: **STOP**. Tell the user which files conflict. Do **NOT** auto-resolve conflicts on main or dev. Ask the user to resolve manually, then confirm before continuing.
 
-## Step 9: Update Jira
+## Step 7: Update Jira
 
 ### 1. Mark the Jira version as released
 
@@ -286,7 +216,7 @@ curl -s -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
     "body": {
       "type": "doc",
       "version": 1,
-      "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Deployed to all stores. Theme name: Release v1.3.0. Business can publish in Shopify admin."}]}]
+      "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Release v1.3.0 finalized. Theme already on all stores (deployed by release-preview action). Business can publish in Shopify admin."}]}]
     }
   }'
 ```
@@ -301,22 +231,17 @@ curl -s -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
     "body": {
       "type": "doc",
       "version": 1,
-      "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Deployed in Release v1.3.0"}]}]
+      "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Released in v1.3.0"}]}]
     }
   }'
 ```
 
-## Step 10: Output Deployment Summary
+## Step 8: Output Release Summary
 
 Display the final summary:
 
 ```
-## Deployment Complete
-
-| Store | Status | Theme Name | Theme ID |
-|-------|--------|------------|----------|
-| US | Deployed | Release v1.3.0 | 12345 |
-| CA | Deployed | Release v1.3.0 | 67890 |
+## Release Finalized
 
 | Item | Details |
 |------|---------|
@@ -325,10 +250,11 @@ Display the final summary:
 | Main merge | Done |
 | Dev sync | Done |
 | Jira tickets | All transitioned to Done |
+| Theme | "Release v1.3.0" on all stores (unpublished) |
 | Next step | Business publishes theme in Shopify admin |
 ```
 
-If any stores failed or any Jira transitions failed, list them clearly in the summary so the user knows what needs manual follow-up.
+If any Jira transitions failed, list them clearly in the summary so the user knows what needs manual follow-up.
 
 ## References
 

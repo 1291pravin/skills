@@ -157,6 +157,128 @@ Run `/package-version-update` in your AI coding agent, or just ask:
 
 > "Update all dependencies in this repo"
 
+### work-on-ticket
+
+End-to-end Jira ticket workflow. Fetches ticket details, optionally pulls Figma designs and Shopify docs via MCP, creates a feature branch, implements the changes, creates a PR, and updates Jira.
+
+**What it does:**
+
+1. Fetches full Jira ticket details (summary, description, acceptance criteria)
+2. (Optional) Fetches Figma design specs via MCP server
+3. (Optional) Fetches relevant Shopify documentation via MCP server
+4. Creates `feature/<TICKET_KEY>-<slug>` branch from dev
+5. Implements the changes based on ticket requirements
+6. Builds and tests (including Shopify theme check)
+7. Creates a PR targeting dev with structured body
+8. Updates Jira ticket: adds PR link, transitions to "In Review"
+
+**Usage:**
+
+Run `/work-on-ticket` in your AI coding agent, or just ask:
+
+> "Work on ticket ENG-123"
+
+### create-release
+
+Release planning and branch creation. Takes a list of tickets and version bump type, verifies all are merged, creates Jira release artifacts, and cuts the release branch.
+
+**What it does:**
+
+1. Parses ticket list and version bump type (major/minor/patch)
+2. Determines new version via semver bump
+3. Verifies all listed tickets are merged to dev
+4. Creates Jira version and release ticket, links all feature tickets
+5. Cuts `release/<version>` branch from dev
+6. Bumps version in package.json and pushes
+
+**Usage:**
+
+Run `/create-release` in your AI coding agent, or just ask:
+
+> "Create release with ENG-101, ENG-102, ENG-103 as minor"
+
+### deploy-release
+
+Deploys a tested release to all Shopify stores. Tags the version, deploys as unpublished themes, merges branches, and updates all Jira tickets.
+
+**What it does:**
+
+1. Validates release ticket and checks for open bugs
+2. Tags the release version
+3. Deploys to all Shopify stores as unpublished themes
+4. Merges release branch to main, then main to dev
+5. Marks Jira version as released, transitions all tickets to Done
+6. Outputs deployment summary table
+
+**Usage:**
+
+Run `/deploy-release` in your AI coding agent, or just ask:
+
+> "Deploy RELEASE-123"
+
+### release-notes
+
+Generates structured release notes from Jira tickets and PR descriptions, then pushes to Confluence.
+
+**What it does:**
+
+1. Fetches all tickets in a Jira release version
+2. Enriches with PR descriptions from GitHub
+3. Categorizes into Features, Bug Fixes, Improvements, Breaking Changes
+4. Generates formatted markdown release notes
+5. Creates a Confluence page with the release notes
+6. Comments on the Jira release ticket with the Confluence link
+
+**Usage:**
+
+Run `/release-notes` in your AI coding agent, or just ask:
+
+> "Generate release notes for v1.3.0"
+
+### hotfix
+
+Emergency hotfix workflow. Branches from main, applies the fix, creates PRs to both main and dev.
+
+**What it does:**
+
+1. Fetches Jira ticket details
+2. Creates `hotfix/<TICKET_KEY>-<slug>` branch from main
+3. Implements the fix with minimal changes
+4. Builds and tests with baseline comparison
+5. Creates PR targeting main
+6. Creates sync PR to dev (cherry-pick or merge)
+7. Updates Jira with both PR links
+
+**Usage:**
+
+Run `/hotfix` in your AI coding agent, or just ask:
+
+> "Hotfix ENG-999"
+
+---
+
+## GitHub Actions
+
+Ready-to-use workflow templates for Shopify theme preview automation. Copy to your theme repo's `.github/workflows/` directory.
+
+| Action | Trigger | Purpose |
+|--------|---------|---------|
+| **branch-check** | PR opened → dev | Block PRs without Jira ticket ID in branch name |
+| **pr-preview** | PR opened → dev | Create preview themes on all Shopify stores |
+| **pr-cleanup** | PR closed → dev | Delete preview themes |
+| **release-preview** | Push to release/* | Create release preview themes |
+| **release-cleanup** | Tag push or manual | Delete release preview themes |
+
+See `github-actions/README.md` for installation instructions and required secrets.
+
+---
+
+## Full Lifecycle Guide
+
+For a complete walkthrough of the end-to-end development workflow — from ticket to production — see **[docs/shopify-lifecycle.md](./docs/shopify-lifecycle.md)**.
+
+---
+
 ## Adding New Skills
 
 Each skill is a folder with a `SKILL.md` file:

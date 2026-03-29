@@ -35,10 +35,8 @@ jobs:
           SHOPIFY_STORES_JSON: ${{ secrets.SHOPIFY_STORES_JSON }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          THEME_NAME="release-preview-$VERSION"
-          echo "Deploying release preview: $THEME_NAME"
-
-          RESULTS=""
+          THEME_NAME="Release $VERSION"
+          echo "Deploying release theme: $THEME_NAME"
 
           echo "$SHOPIFY_STORES_JSON" | jq -c '.[]' | while read -r store; do
             STORE_NAME=$(echo "$store" | jq -r '.name')
@@ -48,21 +46,21 @@ jobs:
             echo ""
             echo "=== $STORE_NAME ($STORE_URL) ==="
 
-            # Check if release preview already exists
+            # Check if release theme already exists
             EXISTING_ID=$(curl -s \
               "https://$STORE_URL/admin/api/2024-01/themes.json" \
               -H "X-Shopify-Access-Token: $STORE_TOKEN" \
               | jq -r ".themes[] | select(.name == \"$THEME_NAME\") | .id")
 
             if [ -n "$EXISTING_ID" ] && [ "$EXISTING_ID" != "null" ]; then
-              echo "Updating existing release preview (ID: $EXISTING_ID)..."
+              echo "Updating existing release theme (ID: $EXISTING_ID)..."
               shopify theme push \
                 --store="$STORE_URL" \
                 --password="$STORE_TOKEN" \
                 --theme="$EXISTING_ID" \
                 --ignore=config/settings_data.json
             else
-              echo "Creating new release preview..."
+              echo "Creating new release theme..."
               shopify theme push \
                 --store="$STORE_URL" \
                 --password="$STORE_TOKEN" \
@@ -72,8 +70,67 @@ jobs:
             fi
 
             if [ $? -eq 0 ]; then
-              echo "✓ $STORE_NAME — release preview deployed"
+              echo "✓ $STORE_NAME — release theme deployed"
             else
-              echo "✗ $STORE_NAME — release preview failed"
+              echo "✗ $STORE_NAME — release theme failed"
             fi
+          done
+
+      - name: Clean up old release themes
+        env:
+          SHOPIFY_STORES_JSON: ${{ secrets.SHOPIFY_STORES_JSON }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          CURRENT_THEME="Release $VERSION"
+          echo "Cleaning up old release themes (keeping published + current + 1 rollback)..."
+
+          echo "$SHOPIFY_STORES_JSON" | jq -c '.[]' | while read -r store; do
+            STORE_NAME=$(echo "$store" | jq -r '.name')
+            STORE_URL=$(echo "$store" | jq -r '.url')
+            STORE_TOKEN=$(echo "$store" | jq -r '.token')
+
+            echo ""
+            echo "=== Cleanup: $STORE_NAME ==="
+
+            # Get all themes
+            THEMES_JSON=$(curl -s \
+              "https://$STORE_URL/admin/api/2024-01/themes.json" \
+              -H "X-Shopify-Access-Token: $STORE_TOKEN")
+
+            # Find all "Release v*" themes that are:
+            #   - NOT the currently published theme (role=main)
+            #   - NOT the current release theme being deployed
+            # Sort by created_at descending, keep the most recent one (rollback), delete the rest
+            RELEASE_THEMES=$(echo "$THEMES_JSON" | jq -c --arg current "$CURRENT_THEME" '
+              [.themes[]
+                | select(.name | test("^Release v"))
+                | select(.role != "main")
+                | select(.name != $current)]
+              | sort_by(.created_at)
+              | reverse')
+
+            TOTAL=$(echo "$RELEASE_THEMES" | jq 'length')
+            echo "Found $TOTAL old release themes (excluding published and current)"
+
+            if [ "$TOTAL" -le 1 ]; then
+              echo "Nothing to clean up (keeping 1 for rollback)"
+              continue
+            fi
+
+            # Skip the first one (most recent = rollback), delete the rest
+            echo "$RELEASE_THEMES" | jq -c '.[1:][]' | while read -r theme; do
+              THEME_ID=$(echo "$theme" | jq -r '.id')
+              THEME_NAME_OLD=$(echo "$theme" | jq -r '.name')
+
+              echo "  Deleting $THEME_NAME_OLD (ID: $THEME_ID)..."
+              HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
+                "https://$STORE_URL/admin/api/2024-01/themes/$THEME_ID.json" \
+                -H "X-Shopify-Access-Token: $STORE_TOKEN")
+
+              if [ "$HTTP_STATUS" = "200" ]; then
+                echo "  ✓ Deleted $THEME_NAME_OLD"
+              else
+                echo "  ✗ Failed to delete $THEME_NAME_OLD (HTTP $HTTP_STATUS)"
+              fi
+            done
           done
