@@ -283,6 +283,13 @@ When the user provides partial information, resolve the target using this logic:
 
 ## Full Remediation Workflow
 
+> **DEPRECATED**: The remediation workflow below has been replaced by the Jira-centric flow:
+> 1. `/triage-aqa` — scan and create Jira tickets
+> 2. `/work-on-ticket <KEY>` — fix the violations locally
+> 3. `/ship-ticket` — commit, create PR, and update Jira
+>
+> The API management operations above (suites, flows, crawlers, tests, scheduling) are **not deprecated** and remain the primary way to interact with the AQA platform.
+
 When the user wants to scan and fix accessibility issues, follow this end-to-end flow. Each step uses the APIs above.
 
 1. **Validate** environment variables and API connectivity

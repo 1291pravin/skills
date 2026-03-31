@@ -10,7 +10,10 @@ Shared branch naming, commit format, and PR templates used across all skills.
 | Bug fix | `bugfix/<TICKET_KEY>-<slug>` | `bugfix/ENG-456-fix-null-price` |
 | Hotfix | `hotfix/<TICKET_KEY>-<slug>` | `hotfix/ENG-789-fix-checkout-crash` |
 | Release | `release/<version>` | `release/v1.3.0` |
-| Error fix | `fix/error-<TICKET_KEY>-<date>` | `fix/error-ENG-100-2026-03-29` |
+| Apiiro fix | `fix/apiiro-<TICKET_KEY>` | `fix/apiiro-ENG-200` |
+| AQA fix | `fix/aqa-<TICKET_KEY>` | `fix/aqa-ENG-300` |
+| SonarQube fix | `fix/sonarqube-<TICKET_KEY>` | `fix/sonarqube-ENG-400` |
+| Error fix | `fix/error-<TICKET_KEY>` | `fix/error-ENG-100` |
 
 Slug rules:
 - Lowercase, hyphens only (no underscores or spaces)
