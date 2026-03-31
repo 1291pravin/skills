@@ -1,19 +1,22 @@
 ---
 name: work-on-ticket
 description: >
-  Work on a Jira ticket end-to-end: fetch ticket details, optionally pull
-  Figma design specs via MCP and Shopify developer documentation via MCP,
-  create a feature branch, implement the changes, run builds and tests,
-  create a pull request, and update Jira status throughout. Use this skill
-  whenever the user says "work on ticket", "pick up ticket", "start ticket",
-  "work on ABC-123", "implement ABC-123", or references a Jira ticket key
-  they want to start working on, even if they don't explicitly say
-  "work-on-ticket".
+  Work on a Jira ticket: fetch ticket details, detect the ticket type via
+  labels (apiiro, aqa, sonarqube, errors, or regular feature), load the
+  appropriate fix strategy, create a branch, implement changes, and run
+  builds and tests. Does NOT create a PR or push — use /ship-ticket for
+  that. Optionally pulls Figma design specs and Shopify docs via MCP for
+  regular feature tickets. Use this skill whenever the user says "work on
+  ticket", "pick up ticket", "start ticket", "work on ABC-123", "implement
+  ABC-123", or references a Jira ticket key they want to start working on,
+  even if they don't explicitly say "work-on-ticket".
 ---
 
 # Work on Jira Ticket
 
-Automate the full developer workflow for a Jira ticket: fetch context, create a branch, implement changes, test, open a PR, and keep Jira up to date. Follow each step in order.
+Automate the developer workflow for a Jira ticket: fetch context, detect ticket type, create a branch, load the right fix strategy, implement changes, and test. Follow each step in order.
+
+**Important:** This skill does NOT create a PR or push to GitHub. After changes are applied and tested, the user should test locally and then run `/ship-ticket` to finalize.
 
 ## Step 1: Validate Environment Variables
 
@@ -61,11 +64,12 @@ curl -s -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
 Extract the following fields:
 
 - **Summary** — `fields.summary`
-- **Description** — `fields.description` (ADF format). Parse the ADF JSON into readable plain text. Preserve headings, lists, and code blocks.
-- **Acceptance Criteria** — look in the description for a heading called "Acceptance Criteria" or check `fields.customfield_*` fields that contain acceptance criteria.
-- **Story Points** — `fields.story_points` or `fields.customfield_10016` (common default)
-- **Linked Issues** — `fields.issuelinks` (list related tickets)
-- **Attachments** — `fields.attachment` (note filenames and URLs)
+- **Description** — `fields.description` (ADF format). Parse the ADF JSON into readable plain text.
+- **Labels** — `fields.labels[]` (used for routing in Step 4)
+- **Acceptance Criteria** — look in the description for a heading called "Acceptance Criteria" or check `fields.customfield_*` fields
+- **Story Points** — `fields.story_points` or `fields.customfield_10016`
+- **Linked Issues** — `fields.issuelinks`
+- **Attachments** — `fields.attachment`
 - **Comments** — `fields.comment.comments` (latest 5)
 
 Display a formatted summary to the developer:
@@ -75,6 +79,7 @@ Ticket:    ENG-123
 Summary:   Add size selector to product page
 Points:    3
 Status:    To Do
+Labels:    apiiro, auto-triage
 ---
 Description:
   <parsed description text>
@@ -87,74 +92,64 @@ Attachments: design-spec.png, mockup.fig
 Linked Issues: ENG-100 (blocked by), ENG-110 (relates to)
 ```
 
-## Step 4: Fetch Design Specs (Optional — MCP)
+## Step 4: Detect Fix Strategy via Labels
 
-Check if the **Figma MCP server** is available.
+Read the ticket's `fields.labels[]` array and route to the appropriate fix strategy.
 
-**If available:**
+**Routing table** (check in this order — first match wins):
 
-1. Scan the ticket description and attachments for Figma URLs (e.g. `https://www.figma.com/file/...` or `https://www.figma.com/design/...`).
-2. Use the Figma MCP to fetch design specs:
-   - Component properties and variants
-   - Colors (hex values, design tokens)
-   - Spacing and padding values
-   - Typography (font family, size, weight, line-height)
-   - Auto-layout and responsive behavior
-3. Store the extracted specs for use in Step 8.
+| Label Found | Strategy File | Branch Prefix | Description |
+|-------------|--------------|---------------|-------------|
+| `apiiro` | `fix-strategies/apiiro.md` | `fix/apiiro-<KEY>` | Apiiro security finding remediation |
+| `aqa` | `fix-strategies/aqa.md` | `fix/aqa-<KEY>` | AQA accessibility violation remediation |
+| `sonarqube` | `fix-strategies/sonarqube.md` | `fix/sonarqube-<KEY>` | SonarQube issue remediation |
+| `errors` or `auto-triage` | `fix-strategies/errors.md` | `fix/error-<KEY>` | Production error fix |
+| *(none of the above)* | `fix-strategies/default.md` | `feature/<KEY>-<slug>` | Standard feature implementation |
 
-**If not available:**
+Tell the user which strategy was detected:
 
-Skip this step and print:
+> Detected label **apiiro** — loading Apiiro security fix strategy.
 
-> Tip: Configure the Figma MCP server for automatic design spec fetching. See `references/mcp-setup.md`
+Or if no specialized label:
 
-## Step 5: Fetch Shopify Documentation (Optional — MCP)
+> No specialized label found — using default implementation strategy.
 
-Check if the **shopify-dev-mcp** server is available.
+### Validate Strategy-Specific Environment Variables
 
-**If available:**
+Some strategies require additional environment variables:
 
-Based on the ticket context, determine relevant Shopify topics and fetch documentation:
+- **errors strategy**: Also requires `GCLOUD_PROJECT_ID`, `SENTRY_URL`, `SENTRY_ORG`, `SENTRY_PROJECT`, `SENTRY_AUTH_TOKEN`
+- **apiiro strategy**: Requires Apiiro CLI to be installed and authenticated
+- **sonarqube strategy**: Requires `SONAR_HOST_URL`, `SONAR_TOKEN`
+- **aqa strategy**: Requires `AQA_API_KEY`, `AQA_TEAM_SLUG`
 
-- **Liquid templates** — if the ticket involves template changes
-- **Section schema** — if building or modifying sections
-- **Metafields** — if the ticket references custom data
-- **Cart API / AJAX API** — if cart functionality is involved
-- **Theme architecture** — for structural changes (layouts, templates, snippets)
-- **Shopify Functions / Extensions** — if extending checkout or storefront
+Check the required variables for the detected strategy and report any missing ones before proceeding.
 
-Store the fetched documentation for use in Step 8.
+## Step 5: Create Branch
 
-**If not available:**
-
-Skip this step and print:
-
-> Tip: Configure the shopify-dev-mcp server for automatic Shopify documentation fetching. See `references/mcp-setup.md`
-
-## Step 6: Create Feature Branch
-
-Create a feature branch from `dev`:
+Create a branch based on the detected strategy:
 
 1. Fetch the latest from the remote:
    ```bash
    git fetch origin
    ```
-2. Generate a branch name: `feature/<TICKET_KEY>-<slug>` where `<slug>` is the ticket summary lowercased, spaces replaced with hyphens, truncated to 40 characters, special characters removed.
-   Example: `feature/ENG-123-add-size-selector-to-product-page`
-3. Check if the branch already exists locally or on the remote:
+
+2. Generate a branch name using the prefix from Step 4:
+   - For fix strategies: `<prefix>-<TICKET_KEY>` (e.g., `fix/apiiro-ENG-123`)
+   - For default: `feature/<TICKET_KEY>-<slug>` where `<slug>` is the ticket summary lowercased, spaces replaced with hyphens, truncated to 40 characters, special characters removed
+
+3. Check if the branch already exists:
    ```bash
-   git branch --list "feature/<TICKET_KEY>-*"
-   git branch -r --list "origin/feature/<TICKET_KEY>-*"
+   git branch --list "<branch-pattern>"
+   git branch -r --list "origin/<branch-pattern>"
    ```
-   - **If it exists**: Ask the user — "Branch `feature/ENG-123-...` already exists. Continue working on it, or create a fresh branch?"
-     - Continue: check out the existing branch and pull latest.
-     - Fresh: delete the old branch and create a new one.
+   - **If it exists**: Ask the user — continue working on it, or create a fresh branch?
    - **If it does not exist**: Create and check out:
      ```bash
-     git checkout -b feature/<TICKET_KEY>-<slug> origin/dev
+     git checkout -b <branch-name> origin/dev
      ```
 
-## Step 7: Transition Jira to "In Progress"
+## Step 6: Transition Jira to "In Progress"
 
 Fetch the available transitions for the ticket:
 
@@ -174,153 +169,51 @@ curl -s -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
   "$JIRA_URL/rest/api/3/issue/<TICKET_KEY>/transitions"
 ```
 
-If the ticket is already "In Progress" (check `fields.status.name`), skip this step and print:
-
+If the ticket is already "In Progress", skip and print:
 > Ticket is already In Progress — skipping transition.
 
-## Step 8: Implement Changes
+## Step 7: Execute Fix Strategy
 
-Use all gathered context to implement the ticket:
+Read the fix strategy file identified in Step 4 and follow its instructions to implement the changes.
 
-- **Jira details** — summary, description, acceptance criteria
-- **Figma specs** (if fetched in Step 4) — colors, spacing, typography, component structure
-- **Shopify docs** (if fetched in Step 5) — correct Liquid syntax, section schema patterns, API usage
+Each strategy file contains:
+- How to parse the ticket description for structured data
+- Specific remediation guidance for that type of issue
+- Build and test verification steps
 
-Follow Shopify theme development best practices:
+**Read the strategy file** from the `fix-strategies/` directory relative to this skill and follow it step by step.
 
-- Use **Liquid** for templates and rendering logic
-- Build reusable **sections** and **snippets**
-- Define settings via **settings_schema** with proper types and defaults
-- For JavaScript: follow existing patterns in the codebase (check `assets/` for conventions)
-- Keep CSS scoped to the component or section
-- Use semantic HTML and ensure accessibility (ARIA attributes, alt text)
+## Step 8: Report Results
 
-Work through each acceptance criterion. After implementing, review the diff to verify nothing was missed.
-
-## Step 9: Build & Test
-
-1. Detect the package manager (check `package.json`, lock files).
-2. Install dependencies if needed.
-3. Run the build:
-   ```bash
-   npm run build   # or yarn build / pnpm build
-   ```
-4. Run `shopify theme check` if the Shopify CLI is available — fix any errors or warnings.
-5. Run tests if a test script exists:
-   ```bash
-   npm test
-   ```
-6. Compare results against the baseline. If there are regressions:
-   - Attempt to fix the issue.
-   - Re-run the build and tests.
-   - Retry up to **3 attempts**. If regressions persist after 3 attempts, stop and report the failures to the developer.
-
-## Step 10: Create Pull Request
-
-Stage and commit changes, then create a PR targeting `dev`:
-
-```bash
-gh pr create --base dev --title "<TICKET_KEY>: <Summary>" --body "$(cat <<'EOF'
-## Summary
-<Ticket summary and brief description of what was implemented>
-
-**Jira:** [<TICKET_KEY>](<JIRA_URL>/browse/<TICKET_KEY>)
-
-## Changes
-- <change 1>
-- <change 2>
-- <change 3>
-
-## Screenshots
-<!-- Add screenshots here if this is a UI change -->
-
-## Figma
-<!-- Link to Figma design if available -->
-<Figma URL from ticket, or "N/A">
-
-## Test Plan
-- [ ] Build passes
-- [ ] Theme check passes (no new errors)
-- [ ] Acceptance criteria verified
-- [ ] Responsive behavior tested
-- [ ] Cross-browser tested (Chrome, Safari, Firefox)
-EOF
-)"
-```
-
-Push the branch first if it has not been pushed:
-
-```bash
-git push -u origin HEAD
-```
-
-## Step 11: Update Jira
-
-### Add a comment with the PR URL
-
-Post a comment using ADF (Atlassian Document Format) v3:
-
-```bash
-curl -s -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
-  -X POST \
-  -H "Content-Type: application/json" \
-  -d '{
-    "body": {
-      "version": 1,
-      "type": "doc",
-      "content": [
-        {
-          "type": "paragraph",
-          "content": [
-            {"type": "text", "text": "Pull request opened: "},
-            {
-              "type": "text",
-              "text": "<PR_URL>",
-              "marks": [{"type": "link", "attrs": {"href": "<PR_URL>"}}]
-            }
-          ]
-        }
-      ]
-    }
-  }' \
-  "$JIRA_URL/rest/api/3/issue/<TICKET_KEY>/comment"
-```
-
-If the v3 comment format fails (HTTP 400), fall back to v2:
-
-```bash
-curl -s -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
-  -X POST \
-  -H "Content-Type: application/json" \
-  -d '{"body": "Pull request opened: <PR_URL>"}' \
-  "$JIRA_URL/rest/api/2/issue/<TICKET_KEY>/comment"
-```
-
-### Transition to "In Review"
-
-Fetch transitions again and find one whose name contains "In Review", "Code Review", or "Review" (case-insensitive). Apply it the same way as Step 7.
-
-### Final Summary
-
-Print a summary table:
+After the fix strategy completes (including build/test verification), print a summary:
 
 ```
 ============================================
-  Ticket Complete — Summary
+  Work Complete — Ready for Testing
 ============================================
   Ticket:       ENG-123
-  Branch:       feature/ENG-123-add-size-selector
-  PR:           https://github.com/org/repo/pull/42
-  Jira Status:  In Review
+  Strategy:     apiiro (security remediation)
+  Branch:       fix/apiiro-ENG-123
   Build:        Passed
   Tests:        Passed
-  Theme Check:  Passed (0 errors)
+  Jira Status:  In Progress
+============================================
+
+  Review the changes locally, then run
+  /ship-ticket to create the PR and
+  update Jira.
 ============================================
 ```
+
+**Do NOT** create a PR, push to the remote, or update Jira status beyond "In Progress". The user should:
+1. Test the changes locally
+2. Run `/ship-ticket` when satisfied
 
 ---
 
 ## References
 
-- For full Jira API patterns, read `../../references/jira-api.md`
-- For branch naming conventions, read `../../references/git-conventions.md`
+- For full Jira API patterns, read `../references/jira-api.md`
+- For branch naming conventions, read `../references/git-conventions.md`
+- For ticket description formats (data contract), read `../references/ticket-description-formats.md`
+- For package manager detection, read `../references/package-manager-detection.md`

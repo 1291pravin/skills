@@ -210,7 +210,7 @@ For each error marked as "new" in Step 6, create a Jira ticket.
 - **Project**: `$JIRA_PROJECT_KEY`
 - **Type**: Bug
 - **Summary**: First 200 chars of the error signature
-- **Labels**: `auto-triage`
+- **Labels**: `["errors", "auto-triage"]`
 - **Description** (use this exact template):
 
 ```
@@ -256,7 +256,7 @@ curl -s -X POST \
         "version": 1,
         "content": [...]
       },
-      "labels": ["auto-triage"]
+      "labels": ["errors", "auto-triage"]
     }
   }'
 ```

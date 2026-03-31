@@ -14,6 +14,13 @@ description: >
 
 # Apiiro Security Remediation
 
+> **DEPRECATED**: This skill has been replaced by the Jira-centric workflow:
+> 1. `/triage-apiiro` — scan and create Jira tickets
+> 2. `/work-on-ticket <KEY>` — fix the findings locally
+> 3. `/ship-ticket` — commit, create PR, and update Jira
+>
+> The standalone scan+fix+PR flow below is kept for reference but should not be used for new work.
+
 Automate the full Apiiro security remediation workflow: detect issues, fix them in priority order (20 per run), verify the fixes, and create a focused PR per chunk. Automatically resumes from previous sessions. Follow each step in order.
 
 ## Step 1: Check & Install Apiiro CLI

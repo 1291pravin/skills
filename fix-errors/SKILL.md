@@ -12,6 +12,13 @@ description: >
 
 # Error Fix — Jira Ticket → Code Fix → PR
 
+> **DEPRECATED**: This skill has been replaced by the Jira-centric workflow:
+> 1. `/triage-errors` — scan and create Jira tickets (already exists)
+> 2. `/work-on-ticket <KEY>` — fix the error locally
+> 3. `/ship-ticket` — commit, create PR, and update Jira
+>
+> The standalone flow below is kept for reference but should not be used for new work.
+
 Pick an open error ticket from triage, pull full error context from Sentry and GCP, find and fix the root cause in the current repository, verify with build/tests, create a PR, and update the Jira ticket. Follow each step in order.
 
 ## Step 1: Validate Environment Variables

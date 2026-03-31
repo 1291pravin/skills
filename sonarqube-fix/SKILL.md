@@ -12,6 +12,13 @@ description: >
 
 # SonarQube Issue Remediation
 
+> **DEPRECATED**: This skill has been replaced by the Jira-centric workflow:
+> 1. `/triage-sonarqube` — scan and create Jira tickets
+> 2. `/work-on-ticket <KEY>` — fix the issues locally
+> 3. `/ship-ticket` — commit, create PR, and update Jira
+>
+> The standalone scan+fix+PR flow below is kept for reference but should not be used for new work.
+
 Automate the full SonarQube remediation workflow: connect to your self-hosted SonarQube instance, fetch all open issues, fix them in severity order (20 per run), and create a focused PR per chunk. Follow each step in order.
 
 ## Step 1: Check & Install sonar-scanner CLI
