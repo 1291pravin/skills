@@ -1,6 +1,6 @@
 # Skills
 
-Distributable AI agent skills for security remediation and developer workflows.
+Distributable AI agent skills for security remediation, developer workflows, and autonomous build pipelines.
 
 ## Installation
 
@@ -254,6 +254,44 @@ Emergency hotfix workflow. Branches from main, applies the fix, creates PRs to b
 Run `/hotfix` in your AI coding agent, or just ask:
 
 > "Hotfix ENG-999"
+
+---
+
+## Autonomous Factory Pipeline
+
+`factory` turns a vague requirement into tested, reviewed software by chaining sub-skills through a shared `.factory/state.json`. Self-driving — no `/loop` needed.
+
+| Skill | Phase | What it does |
+|---|---|---|
+| **factory** | entry | Vague requirement → production software. Initializes the workspace and delegates each phase. |
+| **factory-intake** | 1 | Parse the request into a structured `brief.md`; ask clarifying questions. |
+| **factory-spec** | 2 | Research libraries (via `find-docs`) → `spec.md`: user stories, API contracts, data model, acceptance criteria. |
+| **factory-planner** | 3 | Decompose the spec into a DAG of small, shippable tasks in `tasks.json`. |
+| **factory-coder** | 4 | Implement one task end-to-end with library docs in hand; validate locally. |
+| **factory-tester** | 5 | Verify each task like a human — drive the app via `playwright-cli` (UI) or `curl` (API). Writes no test files. |
+| **factory-reviewer** | 6 | Review the task diff for scope creep, AC alignment, style drift. |
+| **factory-security** | 7 | Security audit of the diff: secrets, authz, input validation. |
+| **factory-orchestrator** | — | State-machine driver. Loops phases until `done`/`blocked`/`aborted`. Crash-safe resume. |
+| **factory-human-gate** | — | Pause point. Surfaces blockers to the human; resumes or aborts. |
+
+**Usage:**
+
+> "/factory build me a ..." — or "Run the factory on this requirement"
+
+The pipeline references `find-docs` and `playwright-cli` (below), so install all of them together:
+
+```bash
+npx skills add 1291pravin/skills --skill '*' -a claude-code -g
+```
+
+## General-Purpose Skills
+
+| Skill | What it does |
+|---|---|
+| **find-docs** | Up-to-date docs, API references, and code examples for any library/framework/SDK/CLI (Context7-backed). Dependency of the factory pipeline. |
+| **playwright-cli** | Browser automation via the `playwright-cli` binary — navigate, fill forms, screenshot, extract, test web apps. Dependency of `factory-tester`. |
+| **figma-prompt** | Capture Figma designs as screenshots + structured design info while coding. |
+| **graphify** | Turn any input (code, docs, papers, images) into a knowledge graph with clustered communities → HTML + JSON + audit report. |
 
 ---
 
